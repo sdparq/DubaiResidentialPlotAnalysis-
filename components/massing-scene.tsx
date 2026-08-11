@@ -1,0 +1,249 @@
+"use client";
+import { Canvas } from "@react-three/fiber";
+import { OrbitControls, Grid, Edges, Line } from "@react-three/drei";
+import { useMemo } from "react";
+import * as THREE from "three";
+import type { Point } from "@/lib/geom";
+import { polygonBBox, polygonCentroid } from "@/lib/geom";
+import type { Volume } from "@/lib/massing";
+
+export interface SceneProps {
+  plot: Point[];           // Plot polygon in plot-local metres
+  buildable: Point[];      // Buildable polygon (after setbacks)
+  /** Volumes that compose the building. Each has its own footprint, height span and optional hole. */
+  volumes: Volume[];
+  /** Used to draw faint floor-level rings on the primary footprint. */
+  floorHeight: number;
+  /** Footprint to trace floor lines on (typically the tallest volume's polygon). */
+  primaryFootprint?: Point[];
+  showFrontMarker?: boolean;
+  /** Optional per-edge colors for the plot outline. */
+  edgeColors?: string[];
+}
+
+export default function MassingScene(props: SceneProps) {
+  const { plot, buildable, volumes, floorHeight, primaryFootprint, showFrontMarker, edgeColors } = props;
+
+  const bbox = useMemo(() => polygonBBox(plot), [plot]);
+  const centroid = useMemo(() => polygonCentroid(plot), [plot]);
+
+  const topY = volumes.reduce((m, v) => Math.max(m, v.toY), 0);
+  const maxDim = Math.max(bbox.w, bbox.h, topY, 30);
+  const camDist = maxDim * 1.4;
+
+  const plotShape = useMemo(() => polyToShape(plot), [plot]);
+  const buildableShape = useMemo(() => (buildable.length >= 3 ? polyToShape(buildable) : null), [buildable]);
+
+  const volumeShapes = useMemo(
+    () =>
+      volumes.map((v) => {
+        const s = polyToShape(v.polygon);
+        if (s && v.hole && v.hole.length >= 3) {
+          const reversed = v.hole.slice().reverse(); // holes need opposite winding
+          const path = new THREE.Path();
+          path.moveTo(reversed[0].x, reversed[0].y);
+          for (let i = 1; i < reversed.length; i++) path.lineTo(reversed[i].x, reversed[i].y);
+          path.closePath();
+          s.holes.push(path);
+        }
+        return s;
+      }),
+    [volumes]
+  );
+
+  const floorRings = useMemo(() => {
+    if (floorHeight <= 0 || volumes.length === 0) return [];
+    const out: { y: number; polygon: Point[]; hole?: Point[]; emphasis: boolean }[] = [];
+    for (const v of volumes) {
+      // Floor levels inside this volume, excluding top and bottom (those are mesh edges)
+      const startFloor = Math.floor(v.fromY / floorHeight) + 1;
+      const endFloor = Math.ceil(v.toY / floorHeight) - 1;
+      for (let f = startFloor; f <= endFloor; f++) {
+        const y = f * floorHeight;
+        if (y <= v.fromY + 1e-3 || y >= v.toY - 1e-3) continue;
+        out.push({ y, polygon: v.polygon, hole: v.hole, emphasis: f % 5 === 0 });
+      }
+    }
+    return out;
+  }, [volumes, floorHeight]);
+
+  return (
+    <Canvas
+      shadows
+      camera={{
+        position: [centroid.x + camDist * 0.85, camDist * 0.7, -centroid.y + camDist],
+        fov: 40,
+        near: 0.5,
+        far: maxDim * 10,
+      }}
+      style={{ background: "#f6f4ee" }}
+      dpr={[1, 2]}
+    >
+      <ambientLight intensity={0.55} />
+      <directionalLight
+        position={[centroid.x + maxDim * 0.6, maxDim * 1.4, -centroid.y + maxDim * 0.4]}
+        intensity={1.1}
+        castShadow
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-maxDim}
+        shadow-camera-right={maxDim}
+        shadow-camera-top={maxDim}
+        shadow-camera-bottom={-maxDim}
+      />
+
+      <Grid
+        args={[maxDim * 4, maxDim * 4]}
+        cellSize={1}
+        cellThickness={0.4}
+        cellColor="#dcd8d0"
+        sectionSize={10}
+        sectionThickness={0.8}
+        sectionColor="#b8b5ad"
+        fadeDistance={maxDim * 3}
+        fadeStrength={1.4}
+        position={[centroid.x, -0.001, -centroid.y]}
+        infiniteGrid
+      />
+
+      {plotShape && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]} receiveShadow>
+          <shapeGeometry args={[plotShape]} />
+          <meshStandardMaterial color="#ede9df" />
+        </mesh>
+      )}
+
+      {buildableShape && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} receiveShadow>
+          <shapeGeometry args={[buildableShape]} />
+          <meshStandardMaterial color="#bccab0" opacity={0.9} transparent />
+        </mesh>
+      )}
+
+      {/* Plot outline */}
+      {edgeColors && edgeColors.length === plot.length ? (
+        plot.map((p, i) => {
+          const next = plot[(i + 1) % plot.length];
+          const points: [number, number, number][] = [[p.x, 0.02, -p.y], [next.x, 0.02, -next.y]];
+          return <Line key={`edge-${i}`} points={points} color={edgeColors[i]} lineWidth={3} />;
+        })
+      ) : (
+        <Line points={closedPoints(plot, 0.02)} color="#3f5135" lineWidth={1.6} />
+      )}
+
+      {/* Volumes */}
+      {volumes.map((v, i) => {
+        const shape = volumeShapes[i];
+        const depth = v.toY - v.fromY;
+        if (!shape || depth <= 0) return null;
+        return (
+          <mesh
+            key={i}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, v.fromY, 0]}
+            castShadow
+            receiveShadow
+          >
+            <extrudeGeometry args={[shape, { depth, bevelEnabled: false }]} />
+            <meshStandardMaterial color="#647d57" roughness={0.6} metalness={0.1} />
+            <Edges color="#33422e" threshold={1} />
+          </mesh>
+        );
+      })}
+
+      {/* Floor-level rings around each volume — emphasised every 5 floors */}
+      {floorRings.map((r, i) => (
+        <FloorRing key={`fr-${i}`} y={r.y} polygon={r.polygon} hole={r.hole} emphasis={r.emphasis} />
+      ))}
+
+      {showFrontMarker && <FrontMarker plot={plot} />}
+
+      <OrbitControls
+        enablePan
+        enableZoom
+        enableRotate
+        target={[centroid.x, topY / 3, -centroid.y]}
+        maxPolarAngle={Math.PI / 2 - 0.03}
+        minDistance={5}
+        maxDistance={maxDim * 5}
+      />
+    </Canvas>
+  );
+}
+
+function FloorRing({
+  y,
+  polygon,
+  hole,
+  emphasis,
+}: {
+  y: number;
+  polygon: Point[];
+  hole?: Point[];
+  emphasis: boolean;
+}) {
+  const color = emphasis ? "#0a0a0a" : "#2a3525";
+  const width = emphasis ? 2.6 : 1.4;
+  const opacity = emphasis ? 0.95 : 0.7;
+  const ringPoints = (poly: Point[]): [number, number, number][] => {
+    const r: [number, number, number][] = poly.map((p) => [p.x, y, -p.y] as [number, number, number]);
+    r.push([poly[0].x, y, -poly[0].y]);
+    return r;
+  };
+  // depthTest:false + high renderOrder makes the rings draw on top of the
+  // building mesh, so floor markers don't disappear into the solid volume.
+  return (
+    <>
+      <Line
+        points={ringPoints(polygon)}
+        color={color}
+        lineWidth={width}
+        transparent
+        opacity={opacity}
+        depthTest={false}
+        depthWrite={false}
+        renderOrder={2}
+      />
+      {hole && hole.length >= 3 && (
+        <Line
+          points={ringPoints(hole)}
+          color={color}
+          lineWidth={width}
+          transparent
+          opacity={opacity}
+          depthTest={false}
+          depthWrite={false}
+          renderOrder={2}
+        />
+      )}
+    </>
+  );
+}
+
+function polyToShape(points: Point[]): THREE.Shape | null {
+  if (points.length < 3) return null;
+  const s = new THREE.Shape();
+  s.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) s.lineTo(points[i].x, points[i].y);
+  s.closePath();
+  return s;
+}
+
+function closedPoints(points: Point[], elev: number): [number, number, number][] {
+  if (points.length === 0) return [];
+  const result: [number, number, number][] = points.map((p) => [p.x, elev, -p.y]);
+  result.push([points[0].x, elev, -points[0].y]);
+  return result;
+}
+
+function FrontMarker({ plot }: { plot: Point[] }) {
+  const bbox = polygonBBox(plot);
+  const cx = (bbox.minX + bbox.maxX) / 2;
+  const size = Math.max(0.4, Math.min(bbox.w, bbox.h) * 0.04);
+  const z = -(bbox.minY - size);
+  return (
+    <mesh position={[cx, 0.05, z]} rotation={[-Math.PI / 2, 0, 0]}>
+      <coneGeometry args={[size, size * 1.6, 3]} />
+      <meshBasicMaterial color="#647d57" />
+    </mesh>
+  );
+}
