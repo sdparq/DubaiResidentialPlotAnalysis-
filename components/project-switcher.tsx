@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useStore, useProject } from "@/lib/store";
+import { downloadJson, makeBackup } from "@/lib/project-io";
 
 function relativeTime(ts: number): string {
   if (!ts) return "—";
@@ -52,17 +53,17 @@ export default function ProjectSwitcher() {
         aria-expanded={open}
       >
         <div className="min-w-0">
-          <div className="eyebrow text-bone-200/60">Plot Feasibility</div>
-          <div className="text-base font-medium text-bone-100 truncate max-w-[260px] sm:max-w-[360px]">{project.name || "Untitled Project"}</div>
+          <div className="eyebrow text-bone-200/60">Project</div>
+          <div className="text-base font-medium text-bone-100 truncate max-w-[200px] sm:max-w-[360px]">{project.name || "Untitled Project"}</div>
         </div>
         <svg
-          className={`w-4 h-4 text-bone-200/70 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`w-4 h-4 shrink-0 text-bone-200/70 transition-transform ${open ? "rotate-180" : ""}`}
           viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
         ><path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
 
       {open && (
-        <div className="absolute z-30 top-full left-0 mt-2 w-[420px] max-w-[calc(100vw-2rem)] bg-white text-ink-900 border border-ink-200 shadow-xl">
+        <div className="fixed sm:absolute z-40 top-20 sm:top-full left-4 right-4 sm:left-0 sm:right-auto sm:mt-2 sm:w-[420px] bg-white text-ink-900 border border-ink-200 shadow-xl">
           <div className="px-4 py-3 border-b border-ink-200 flex items-center justify-between">
             <div>
               <div className="eyebrow text-ink-500">Projects</div>
@@ -83,7 +84,7 @@ export default function ProjectSwitcher() {
           <ul className="max-h-[60vh] overflow-y-auto">
             {sorted.map((p) => {
               const active = p.id === activeId;
-              const units = p.program.reduce((s, c) => s + c.count, 0);
+              const units = p.program.reduce((s, c) => (c.floor <= p.numFloors ? s + c.count : s), 0);
               return (
                 <li key={p.id} className={`border-b border-ink-100 last:border-b-0 ${active ? "bg-brand-50" : "hover:bg-bone-50"}`}>
                   <div className="flex items-center gap-2 px-4 py-3">
@@ -95,10 +96,14 @@ export default function ProjectSwitcher() {
                         {active && <span className="w-1.5 h-1.5 bg-brand-500 rounded-full shrink-0" />}
                         <span className="font-medium text-sm truncate">{p.name || "Untitled Project"}</span>
                       </div>
-                      <div className="text-[11px] text-ink-500 mt-0.5 flex items-center gap-2">
+                      <div className="text-[11px] text-ink-500 mt-0.5 flex items-center gap-2 min-w-0 whitespace-nowrap">
                         <span>{units} units</span>
-                        <span>·</span>
-                        <span>{p.zone}</span>
+                        {p.zone && (
+                          <>
+                            <span>·</span>
+                            <span className="truncate">{p.zone}</span>
+                          </>
+                        )}
                         <span>·</span>
                         <span>updated {relativeTime(p.updatedAt)}</span>
                       </div>
@@ -129,8 +134,18 @@ export default function ProjectSwitcher() {
               );
             })}
           </ul>
-          <div className="px-4 py-2.5 bg-bone-50 border-t border-ink-200 text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
-            Tip: rename in Setup → Project name
+          <div className="px-4 py-2.5 bg-bone-50 border-t border-ink-200 flex items-center justify-between gap-3">
+            <span className="text-[10.5px] uppercase tracking-[0.18em] text-ink-500">Rename in Setup → Project name</span>
+            <button
+              className="text-[10.5px] font-medium uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 shrink-0"
+              title="Download every project in one file. Restore it later with Import."
+              onClick={() => {
+                const stamp = new Date().toISOString().slice(0, 10);
+                downloadJson(makeBackup(sorted), `plot-analysis-backup-${stamp}.json`);
+              }}
+            >
+              Backup all
+            </button>
           </div>
         </div>
       )}

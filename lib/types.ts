@@ -71,12 +71,17 @@ export interface OtherUse {
 export interface LiftsConfig {
   cabinKg: 1000 | 1275 | 1600;
   speed: number;
+  /** CIBSE t_s — time consumed per stop (doors + acceleration/deceleration losses), s. */
   timePerStop: number;
   handlingPctStandard: number;
   handlingPctPremium: number;
   unitsPerLiftRule: number;
   dcdMinLifts: number;
   dcdMinUnitsThreshold: number;
+  /** CIBSE t_p — passenger transfer time per passenger (in or out), s. Default 1.2. */
+  passengerTransferS?: number;
+  /** Target average interval between lift departures, s. Default 60. */
+  targetIntervalS?: number;
 }
 
 export interface ParcelInfo {
@@ -102,6 +107,8 @@ export interface Project {
   updatedAt: number;
   name: string;
   zone: string;
+  /** Plot number as shown on the affection plan / DLD title deed. */
+  plotNumber?: string;
   use: "RESIDENTIAL";
   plotArea: number;
   numFloors: number;
@@ -155,10 +162,13 @@ export interface Project {
   uOpening?: "N" | "S" | "E" | "W";
   uArmRatio?: number;               // 0..0.5 — thickness of each arm relative to bbox
   uNotchDepth?: number;             // 0..0.9 — depth of the central notch as fraction of bbox
-  /** Hard constraints used to score variants and flag the active massing. */
+  /** Planning constraints (affection plan). Used by compliance checks and to score massing variants. */
   maxFAR?: number;
   maxHeightM?: number;
-  /** Target GFA (m²) used as the reference when commonAreasInputMode === "percentage". */
+  /**
+   * Permitted / target GFA (m²) from the affection plan. Drives the GFA-utilisation check and is the
+   * 100 % reference when commonAreasInputMode === "percentage".
+   */
   targetGFA?: number;
   /** How the user enters common area sizes. "absolute" = m² × floors (default); "percentage" = each row stores a fraction of targetGFA and the m² is derived. */
   commonAreasInputMode?: "absolute" | "percentage";
@@ -166,12 +176,12 @@ export interface Project {
   garbage?: GarbageOverrides;
   /** Real-estate economic analysis configuration. */
   economic?: EconomicConfig;
-  /** Geographic location of the plot, used for the Photorealistic 3D Tiles in-context view. */
+  /** Geographic location of the plot (WGS84), used by the in-context massing view and the sun / views analyses. */
   latitude?: number;
   longitude?: number;
   /** Heading of the plot's local +y axis relative to true north, in degrees clockwise. 0 = +y points north. */
   northHeadingDeg?: number;
-  /** Optional manual ground-elevation override (m above WGS84 ellipsoid). When unset, the in-context viewer auto-fetches elevation from Open-Meteo. */
+  /** @deprecated no longer used — the in-context view sits on a flat basemap. Kept so old files still import. */
   groundElevationM?: number;
   /** Per-OSM-way height overrides (m) for surrounding buildings in the In-context view */
   nearbyHeightOverrides?: Record<string, number>;
@@ -223,7 +233,9 @@ export interface GarbageOverrides {
 
 export interface EconomicConfig {
   currency?: string;                          // default "AED"
-  /** AED per m² of sellable area, keyed by typology id. */
+  /** Unit used to display and enter prices and rates. Values are always stored per m². Default "sqft". */
+  priceUnit?: "sqm" | "sqft";
+  /** Price per m² of sellable area, keyed by typology id. */
   typologyPricing?: { [typologyId: string]: number };
   /** Parking sold separately. */
   parkingSpacesForSale?: number;
@@ -233,6 +245,10 @@ export interface EconomicConfig {
 
   /** Land acquisition cost (total). */
   landCost?: number;
+  /** Land transfer fee (Dubai Land Department) — fraction of land cost. */
+  dldFeePct?: number;             // default 0.04
+  /** Profit target on GDV used to derive the residual land value. */
+  targetMarginPct?: number;       // default 0.20
   /** Construction rate per m² of BUA. */
   constructionRatePerBUA?: number;
 

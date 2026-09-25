@@ -1,5 +1,5 @@
 "use client";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Edges, OrbitControls } from "@react-three/drei";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -54,6 +54,7 @@ export default function PhysicsScene({
       style={{ background: "#f4f1e8" }}
       dpr={[1, 2]}
     >
+      <FitOrthoCamera span={stats.span} />
       <ambientLight intensity={0.85} />
       <directionalLight position={[200, 320, 140]} intensity={0.6} />
 
@@ -88,6 +89,19 @@ export default function PhysicsScene({
       />
     </Canvas>
   );
+}
+
+/** Orthographic cameras default to 1 px per metre — zoom so the building fills the viewer. */
+function FitOrthoCamera({ span }: { span: number }) {
+  const camera = useThree((s) => s.camera);
+  const width = useThree((s) => s.size.width);
+  const height = useThree((s) => s.size.height);
+  useEffect(() => {
+    if (!(camera instanceof THREE.OrthographicCamera) || span <= 0) return;
+    camera.zoom = Math.max(0.2, Math.min(6, Math.min(width, height) / (span * 1.7)));
+    camera.updateProjectionMatrix();
+  }, [camera, width, height, span]);
+  return null;
 }
 
 function VolumeMesh({ volume }: { volume: Volume }) {

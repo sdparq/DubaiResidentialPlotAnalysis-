@@ -14,90 +14,112 @@ input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; }
 
-/* ---------- form controls ---------- */
-.cell-input {
-  @apply w-full px-3 py-2 bg-white border border-ink-200 text-ink-900 text-sm
-         placeholder:text-ink-400
-         focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500
-         transition-colors;
-  border-radius: 2px;
-}
-.cell-input:disabled { @apply bg-bone-100 text-ink-500; }
+/*
+ * Component classes live in the components layer so Tailwind utilities (text-emerald-700,
+ * text-right…) placed on the same element always win. Table cell rules use :where() to keep
+ * their specificity below a single utility class for the same reason.
+ */
+@layer components {
+  /* ---------- form controls ---------- */
+  .cell-input {
+    @apply w-full px-3 py-2 bg-white border border-ink-200 text-ink-900 text-sm
+           placeholder:text-ink-400
+           focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500
+           transition-colors;
+    border-radius: 2px;
+  }
+  .cell-input:disabled { @apply bg-bone-100 text-ink-500; }
 
-select.cell-input {
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%236b6b6b'><path d='M3 4.5l3 3 3-3'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 0.6rem center;
-  background-size: 12px;
-  padding-right: 2rem;
-  appearance: none;
+  select.cell-input {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%236b6b6b'><path d='M3 4.5l3 3 3-3'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 12px;
+    padding-right: 2rem;
+    appearance: none;
+  }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium
+           transition-colors uppercase tracking-wider;
+    letter-spacing: 0.08em;
+    font-size: 11.5px;
+    border-radius: 2px;
+  }
+  .btn-primary { @apply bg-ink-900 text-bone-100 hover:bg-brand-700; }
+  .btn-secondary { @apply bg-transparent border border-ink-300 text-ink-800 hover:border-ink-700 hover:bg-bone-200; }
+  .btn-ghost { @apply bg-transparent text-ink-700 hover:text-ink-900; }
+  .btn-danger { @apply bg-transparent border border-red-300 text-red-700 hover:bg-red-50; }
+  .btn-xs { @apply px-2.5 py-1.5; font-size: 10.5px; }
+
+  /* ---------- cards & layout ---------- */
+  .card {
+    /* min-w-0: grid items must be allowed to shrink so wide tables scroll inside .tbl-scroll */
+    @apply bg-white border border-ink-200 p-4 sm:p-6 min-w-0;
+    border-radius: 2px;
+  }
+  .kpi {
+    @apply bg-white border border-ink-200 p-4 sm:p-5 flex flex-col gap-2 min-w-0;
+    border-radius: 2px;
+  }
+  .kpi-label { @apply text-[10.5px] uppercase tracking-[0.18em] text-ink-500 font-medium; }
+  .kpi-value { @apply text-xl sm:text-2xl font-medium text-ink-900 tabular-nums; }
+  .kpi-sub { @apply text-xs text-ink-500; }
+
+  .section-title {
+    @apply text-base font-medium text-ink-900 uppercase;
+    letter-spacing: 0.12em;
+  }
+  .section-sub { @apply text-sm text-ink-500 mt-1; }
+  .section-rule { @apply h-px bg-ink-200 my-4; }
+
+  /* ---------- tables ---------- */
+  /* Wide tables scroll sideways inside their card on small screens instead of being clipped. */
+  .tbl-scroll { @apply w-full overflow-x-auto; -webkit-overflow-scrolling: touch; }
+  .tbl-scroll > table.tbl { min-width: var(--tbl-min, 640px); }
+  .tbl { @apply w-full text-sm border-collapse; }
+  :where(.tbl) th {
+    @apply text-left font-medium text-ink-500 uppercase
+           px-3 py-3 border-b border-ink-200 align-middle bg-bone-50 whitespace-nowrap;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+  }
+  :where(.tbl) td {
+    @apply px-3 py-2 border-b border-ink-100 align-middle text-ink-800 tabular-nums;
+  }
+  :where(.tbl) tr:hover > td { @apply bg-bone-50; }
+  :where(.tbl) td.cell-edit { @apply p-1.5; }
+  :where(.tbl tfoot, .tbl tr.row-total) > td { @apply bg-bone-200/60 font-medium text-ink-900; }
+  :where(.tbl tr.row-subtotal) > td { @apply bg-bone-100 font-medium; }
+
+  /* ---------- tags ---------- */
+  .tag { @apply inline-flex items-center px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wider; border-radius: 2px; }
+  .tag-ok { @apply tag bg-emerald-50 text-emerald-800 border border-emerald-200; }
+  .tag-warn { @apply tag bg-amber-50 text-amber-800 border border-amber-200; }
+  .tag-bad { @apply tag bg-red-50 text-red-800 border border-red-200; }
+  .tag-info { @apply tag bg-bone-200 text-ink-700 border border-ink-200; }
+
+  /* ---------- branding ---------- */
+  .wordmark {
+    font-family: var(--font-inter), ui-sans-serif, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+  }
+  .eyebrow {
+    @apply text-[10.5px] uppercase text-ink-500 font-medium;
+    letter-spacing: 0.22em;
+  }
+
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
-/* ---------- buttons ---------- */
-.btn {
-  @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium
-         transition-colors uppercase tracking-wider;
-  letter-spacing: 0.08em;
-  font-size: 11.5px;
-  border-radius: 2px;
-}
-.btn-primary { @apply bg-ink-900 text-bone-100 hover:bg-brand-700; }
-.btn-secondary { @apply bg-transparent border border-ink-300 text-ink-800 hover:border-ink-700 hover:bg-bone-200; }
-.btn-ghost { @apply bg-transparent text-ink-700 hover:text-ink-900; }
-.btn-danger { @apply bg-transparent border border-red-300 text-red-700 hover:bg-red-50; }
-.btn-xs { @apply px-2.5 py-1.5; font-size: 10.5px; }
-
-/* ---------- cards & layout ---------- */
-.card {
-  @apply bg-white border border-ink-200 p-6;
-  border-radius: 2px;
-}
-.kpi {
-  @apply bg-white border border-ink-200 p-5 flex flex-col gap-2;
-  border-radius: 2px;
-}
-.kpi-label { @apply text-[10.5px] uppercase tracking-[0.18em] text-ink-500 font-medium; }
-.kpi-value { @apply text-2xl font-medium text-ink-900 tabular-nums; }
-.kpi-sub { @apply text-xs text-ink-500; }
-
-.section-title {
-  @apply text-base font-medium text-ink-900 uppercase;
-  letter-spacing: 0.12em;
-}
-.section-sub { @apply text-sm text-ink-500 mt-1; }
-.section-rule { @apply h-px bg-ink-200 my-4; }
-
-/* ---------- tables ---------- */
-table.tbl { @apply w-full text-sm border-collapse; }
-table.tbl th {
-  @apply text-left font-medium text-ink-500 uppercase
-         px-3 py-3 border-b border-ink-200 align-middle bg-bone-50 whitespace-nowrap;
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
-}
-table.tbl td {
-  @apply px-3 py-2 border-b border-ink-100 align-middle text-ink-800 tabular-nums;
-}
-table.tbl tr:hover td { @apply bg-bone-50; }
-table.tbl td.cell-edit { @apply p-1.5; }
-table.tbl tfoot td, table.tbl tr.row-total td { @apply bg-bone-200/60 font-medium text-ink-900; }
-table.tbl tr.row-subtotal td { @apply bg-bone-100 font-medium; }
-
-/* ---------- tags ---------- */
-.tag { @apply inline-flex items-center px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wider; border-radius: 2px; }
-.tag-ok { @apply tag bg-emerald-50 text-emerald-800 border border-emerald-200; }
-.tag-warn { @apply tag bg-amber-50 text-amber-800 border border-amber-200; }
-.tag-bad { @apply tag bg-red-50 text-red-800 border border-red-200; }
-.tag-info { @apply tag bg-bone-200 text-ink-700 border border-ink-200; }
-
-/* ---------- branding ---------- */
-.wordmark {
-  font-family: var(--font-inter), ui-sans-serif, sans-serif;
-  font-weight: 600;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-}
-.eyebrow {
-  @apply text-[10.5px] uppercase text-ink-500 font-medium;
-  letter-spacing: 0.22em;
+/* ---------- print (Results → Print / PDF) ---------- */
+@media print {
+  @page { size: A4; margin: 14mm; }
+  html, body { background: #fff !important; height: auto; }
+  .card, .kpi { break-inside: avoid; box-shadow: none; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }

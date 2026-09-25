@@ -5,8 +5,12 @@ import { PRODUCTION_CITY_SAMPLE } from "@/lib/sample";
 import { computeProgram } from "@/lib/calc/program";
 import { computeParking } from "@/lib/calc/parking";
 import { computeLifts } from "@/lib/calc/lifts";
-import { useStore } from "@/lib/store";
-import { fmt0, fmt2, fmtPct } from "@/lib/format";
+import { computeEconomic } from "@/lib/calc/economic";
+import { useStore, whenHydrated } from "@/lib/store";
+import { flushPersist } from "@/lib/persist-storage";
+import { commonAreaCategory } from "@/lib/types";
+import { perM2ToPerSqft } from "@/lib/units";
+import { fmt0, fmt2, fmtMoneyShort, fmtPct } from "@/lib/format";
 import { BRAND } from "@/lib/brand";
 
 /**
@@ -31,6 +35,7 @@ interface SampleData {
   program: ReturnType<typeof computeProgram>;
   parking: ReturnType<typeof computeParking>;
   lifts: ReturnType<typeof computeLifts>;
+  economic: ReturnType<typeof computeEconomic>;
 }
 
 const ease = (x: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
@@ -315,7 +320,7 @@ function CommonAreasScene({ t, data }: { t: number; data: SampleData }) {
           </div>
           {sample.map((c, i) => {
             const local = ease(clamp01((t - i * 0.06) / 0.16));
-            const cat = c.countAsGFA === false ? "OPEN" : "GFA";
+            const cat = commonAreaCategory(c);
             return (
               <div
                 key={c.id}
@@ -337,7 +342,7 @@ function CommonAreasScene({ t, data }: { t: number; data: SampleData }) {
             <div className="text-brand-800 uppercase text-[10.5px] tracking-[0.10em]">Total</div>
             <div></div>
             <div className="text-right text-brand-800">{fmt0(data.program.commonAreasGFA + data.program.commonAreasBUAonly + data.program.commonAreasOpen)} m²</div>
-            <div className="text-right text-brand-800 text-[10.5px]">22 rows</div>
+            <div className="text-right text-brand-800 text-[10.5px]">{data.project.commonAreas.length} rows</div>
           </div>
         </div>
         <p className="text-[12px] text-ink-500">
@@ -559,10 +564,10 @@ function ParkingLiftsScene({ t, data }: { t: number; data: SampleData }) {
       rows: [
         { k: "Recommended", v: `${lf.liftsRecommended} × ${data.project.lifts.cabinKg} kg` },
         { k: "CIBSE", v: `${lf.liftsCIBSE} cabins` },
-        { k: "Round trip", v: `${lf.rttSeconds.toFixed(0)} s` },
+        { k: "Round trip", v: `${lf.rttSeconds.toFixed(0)} s · interval ${lf.intervalAchievedS.toFixed(0)} s` },
         { k: "Governing", v: lf.governing },
       ],
-      verdict: lf.liftsRecommended >= lf.dcdMinLifts ? "PASS" : "REVIEW",
+      verdict: lf.intervalAchievedS <= lf.targetIntervalS ? "PASS" : "REVIEW",
     },
   ];
   return (
@@ -604,7 +609,7 @@ function ResultsScene({ t, data }: { t: number; data: SampleData }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
       <div className="grid gap-3 w-[760px]">
-        <div className="eyebrow text-ink-500">Tab 10 · Results</div>
+        <div className="eyebrow text-ink-500">Tab 11 · Results</div>
         <div className="grid grid-cols-3 gap-3">
           {stats.map((s, i) => {
             const local = ease(clamp01((t - i * 0.10) / 0.3));
@@ -620,6 +625,39 @@ function ResultsScene({ t, data }: { t: number; data: SampleData }) {
         <p className="text-[11.5px] text-ink-500">
           All numbers computed live from the {data.project.name} input — no hard-coded results.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function EconomicsScene({ t, data }: { t: number; data: SampleData }) {
+  const e = data.economic;
+  const cur = e.currency;
+  const rows = [
+    { k: "GDV", v: fmtMoneyShort(e.totalRevenue, cur), sub: `avg ${cur} ${fmt0(perM2ToPerSqft(e.avgPricePerM2Sellable))}/sq ft sellable` },
+    { k: "Total development cost", v: fmtMoneyShort(e.totalCost, cur), sub: "land + DLD + build + soft + sales" },
+    { k: "Profit", v: fmtMoneyShort(e.profit, cur), sub: `${fmtPct(e.marginOnGDV)} on GDV · ${fmtPct(e.marginOnCost)} on cost` },
+    { k: "Land", v: `${cur} ${fmt0(e.landCostPerSqftGFA)}/sq ft GFA`, sub: fmtMoneyShort(e.landCost, cur) },
+    { k: `Residual land @ ${fmtPct(e.targetMarginPct, 0)}`, v: fmtMoneyShort(e.residualLandValue, cur), sub: `${cur} ${fmt0(e.residualLandPerSqftGFA)}/sq ft GFA — max bid` },
+    { k: "Cost / sq ft sellable", v: `${cur} ${fmt0(perM2ToPerSqft(e.costPerM2Sellable))}`, sub: "break-even sale price" },
+  ];
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
+      <div className="grid gap-3 w-[760px]">
+        <div className="eyebrow text-ink-500">Tab 10 · Economics</div>
+        <div className="grid grid-cols-3 gap-3">
+          {rows.map((s, i) => {
+            const local = ease(clamp01((t - i * 0.1) / 0.3));
+            return (
+              <div key={s.k} className="border border-ink-200 bg-white p-4 shadow-sm" style={{ opacity: local, transform: `translateY(${(1 - local) * 14}px)` }}>
+                <div className="eyebrow text-ink-500 text-[10px]">{s.k}</div>
+                <div className="text-[22px] font-light text-ink-900 mt-1 tabular-nums">{s.v}</div>
+                <div className="text-[11px] text-ink-500 mt-0.5">{s.sub}</div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[11.5px] text-ink-500">Sample prices and costs are illustrative — every input is editable per project.</p>
       </div>
     </div>
   );
@@ -661,11 +699,12 @@ const SCENES: Scene[] = [
   { id: "typologies", durationMs: 6500, caption: "02 · 10 unit types — Studio, 1BR (×4), 2BR (×4), 3BR.", render: TypologiesScene },
   { id: "program", durationMs: 8500, caption: "03 · Distribute the typologies floor by floor.", render: ProgramScene },
   { id: "common", durationMs: 7000, caption: "04 · Lobbies, lifts, MEP, gym, pools, BBQ — flagged GFA / BUA / OPEN.", render: CommonAreasScene },
-  { id: "parking-lifts", durationMs: 6000, caption: "05 · Parking & 06 · Lifts — Dubai DCD + CIBSE Guide D.", render: ParkingLiftsScene },
+  { id: "parking-lifts", durationMs: 6000, caption: "05 · Parking & 06 · Lifts — Dubai ratios + CIBSE Guide D round-trip.", render: ParkingLiftsScene },
   { id: "massing", durationMs: 7500, caption: "08 · Massing in 3D — block, podium, courtyard, twin, stepped, L, U.", render: MassingScene },
   { id: "context", durationMs: 7000, caption: "08 · In-context — drop it on its real plot, edit neighbours.", render: ContextScene },
   { id: "ai", durationMs: 8000, caption: "✦ AI scheme render — Gemini image-to-image.", render: ({ t }) => <AiRenderScene t={t} /> },
-  { id: "results", durationMs: 7000, caption: "10 · KPIs computed live — every number is real.", render: ResultsScene },
+  { id: "economics", durationMs: 7500, caption: "10 · GDV, margin and the residual land value — what the plot is worth to you.", render: EconomicsScene },
+  { id: "results", durationMs: 7000, caption: "11 · KPIs and compliance computed live — every number is real.", render: ResultsScene },
   { id: "outro", durationMs: 5000, caption: "Open the sample and explore it yourself.", render: () => null },
 ];
 const TOTAL_MS = SCENES.reduce((s, sc) => s + sc.durationMs, 0);
@@ -690,7 +729,8 @@ export default function DemoPage() {
     const program = computeProgram(project);
     const parking = computeParking(project);
     const lifts = computeLifts(project);
-    return { project, program, parking, lifts };
+    const economic = computeEconomic(project);
+    return { project, program, parking, lifts, economic };
   }, []);
 
   const loadSample = useStore((s) => s.loadSample);
@@ -733,9 +773,12 @@ export default function DemoPage() {
   function restart() { setIdx(0); setT(0); setDone(false); setPlaying(true); }
   function jumpTo(i: number) { setIdx(i); setT(0); setDone(false); setPlaying(true); }
 
-  function handleLoadSample() {
+  async function handleLoadSample() {
+    // Wait for saved projects to load (so they are not overwritten) and for the new one to be written.
+    await whenHydrated();
     loadSample();
-    if (typeof window !== "undefined") window.location.href = "/";
+    await flushPersist();
+    window.location.href = "/";
   }
 
   const scene = SCENES[idx];

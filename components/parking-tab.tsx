@@ -3,6 +3,7 @@ import { useStore, useProject } from "@/lib/store";
 import { computeParking } from "@/lib/calc/parking";
 import { fmt0 } from "@/lib/format";
 import type { OtherUse } from "@/lib/types";
+import NumInput from "./num-input";
 
 export default function ParkingTab() {
   const project = useProject();
@@ -16,14 +17,14 @@ export default function ParkingTab() {
   return (
     <div className="grid gap-6">
       <div className="card">
-        <div className="flex items-start justify-between gap-4 mb-5">
+        <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
           <div>
             <h2 className="section-title">Parking inventory</h2>
             <p className="section-sub">Spaces available by level (standard + PRM / accessible).</p>
           </div>
           <button className="btn btn-primary" onClick={() => upsertP({ id: `pk-${Date.now()}`, name: "New level", standard: 0, prm: 0 })}>+ Add level</button>
         </div>
-        <div>
+        <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "640px" }}>
           <table className="tbl w-full table-fixed">
             <colgroup>
               <col style={{ width: "22%" }} />
@@ -47,11 +48,11 @@ export default function ParkingTab() {
               {project.parking.map((p) => (
                 <tr key={p.id}>
                   <td className="cell-edit"><input className="cell-input" value={p.name} onChange={(e) => upsertP({ ...p, name: e.target.value })} /></td>
-                  <td className="cell-edit"><input type="number" min={0} className="cell-input text-right" value={p.standard} onChange={(e) => upsertP({ ...p, standard: Math.max(0, Math.round(parseFloat(e.target.value) || 0)) })} /></td>
-                  <td className="cell-edit"><input type="number" min={0} className="cell-input text-right" value={p.prm} onChange={(e) => upsertP({ ...p, prm: Math.max(0, Math.round(parseFloat(e.target.value) || 0)) })} /></td>
+                  <td className="cell-edit"><NumInput className="cell-input text-right" value={p.standard} integer min={0} onChange={(v) => upsertP({ ...p, standard: v })} aria-label={`${p.name} standard spaces`} /></td>
+                  <td className="cell-edit"><NumInput className="cell-input text-right" value={p.prm} integer min={0} onChange={(v) => upsertP({ ...p, prm: v })} aria-label={`${p.name} accessible spaces`} /></td>
                   <td className="text-right font-medium">{fmt0(p.standard + p.prm)}</td>
                   <td className="cell-edit"><input className="cell-input" value={p.notes ?? ""} onChange={(e) => upsertP({ ...p, notes: e.target.value })} /></td>
-                  <td className="text-right"><button className="btn btn-danger btn-xs" onClick={() => removeP(p.id)}>Delete</button></td>
+                  <td className="text-right"><button className="btn btn-danger btn-xs" onClick={() => { if (confirm(`Delete ${p.name}?`)) removeP(p.id); }}>Delete</button></td>
                 </tr>
               ))}
               <tr className="row-total">
@@ -67,14 +68,14 @@ export default function ParkingTab() {
       </div>
 
       <div className="card">
-        <div className="flex items-start justify-between gap-4 mb-5">
+        <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
           <div>
             <h2 className="section-title">Other uses (optional)</h2>
             <p className="section-sub">Retail, F&B, etc. with parking ratios per 100 m².</p>
           </div>
           <button className="btn btn-secondary btn-xs" onClick={() => upsertU({ id: `ou-${Date.now()}`, name: "New use", netArea: 0, spacesPer100sqm: 0 })}>+ Add other use</button>
         </div>
-        <div>
+        <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "600px" }}>
           <table className="tbl w-full table-fixed">
             <colgroup>
               <col />
@@ -99,10 +100,10 @@ export default function ParkingTab() {
               {project.otherUses.map((u: OtherUse) => (
                 <tr key={u.id}>
                   <td className="cell-edit"><input className="cell-input" value={u.name} onChange={(e) => upsertU({ ...u, name: e.target.value })} /></td>
-                  <td className="cell-edit"><input type="number" step={0.01} className="cell-input text-right" value={u.netArea} onChange={(e) => upsertU({ ...u, netArea: parseFloat(e.target.value) || 0 })} /></td>
-                  <td className="cell-edit"><input type="number" step={0.1} className="cell-input text-right" value={u.spacesPer100sqm} onChange={(e) => upsertU({ ...u, spacesPer100sqm: parseFloat(e.target.value) || 0 })} /></td>
-                  <td className="text-right">{(u.netArea * u.spacesPer100sqm / 100).toFixed(1)}</td>
-                  <td className="text-right"><button className="btn btn-danger btn-xs" onClick={() => removeU(u.id)}>Delete</button></td>
+                  <td className="cell-edit"><NumInput className="cell-input text-right" value={u.netArea} min={0} step={10} onChange={(v) => upsertU({ ...u, netArea: v })} aria-label={`${u.name} net area`} /></td>
+                  <td className="cell-edit"><NumInput className="cell-input text-right" value={u.spacesPer100sqm} min={0} step={0.5} onChange={(v) => upsertU({ ...u, spacesPer100sqm: v })} aria-label={`${u.name} spaces per 100 m²`} /></td>
+                  <td className="text-right">{fmt0(r.otherUsesRequired.find((x, i) => project.otherUses[i]?.id === u.id)?.required ?? 0)}</td>
+                  <td className="text-right"><button className="btn btn-danger btn-xs" onClick={() => { if (confirm(`Delete ${u.name}?`)) removeU(u.id); }}>Delete</button></td>
                 </tr>
               ))}
             </tbody>
@@ -115,7 +116,7 @@ export default function ParkingTab() {
           <h2 className="section-title">Required vs available</h2>
           <p className="section-sub">Each typology contributes its own ratio (set in the Typologies tab).</p>
         </div>
-        <div>
+        <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "600px" }}>
           <table className="tbl w-full table-fixed">
             <colgroup>
               <col />
@@ -140,22 +141,16 @@ export default function ParkingTab() {
                   <td className="text-right text-ink-500 text-xs">{rt.typology.category}</td>
                   <td className="text-right">{fmt0(rt.units)}</td>
                   <td className="cell-edit">
-                    <input
-                      type="number"
-                      step={0.05}
-                      min={0}
+                    <NumInput
                       className="cell-input text-right"
                       value={rt.ratio}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value);
-                        upsertTypology({
-                          ...rt.typology,
-                          parkingPerUnit: Number.isFinite(v) && v >= 0 ? v : 0,
-                        });
-                      }}
+                      min={0}
+                      step={0.5}
+                      onChange={(v) => upsertTypology({ ...rt.typology, parkingPerUnit: v })}
+                      aria-label={`${rt.typology.name} spaces per unit`}
                     />
                   </td>
-                  <td className="text-right">{fmt0(rt.required)}</td>
+                  <td className="text-right">{Number.isInteger(rt.required) ? fmt0(rt.required) : rt.required.toFixed(1)}</td>
                 </tr>
               ))}
               <tr className="row-subtotal">
@@ -173,7 +168,7 @@ export default function ParkingTab() {
                 <td className="text-right">{fmt0(r.grandRequired)}</td>
               </tr>
               <tr>
-                <td colSpan={4} className="text-right text-ink-500 text-xs">Of which PRM ({(project.prmPercent * 100).toFixed(0)}%)</td>
+                <td colSpan={4} className="text-right text-ink-500 text-xs">Of which accessible / PRM ({(project.prmPercent * 100).toFixed(1).replace(/\.0$/, "")}%)</td>
                 <td className="text-right">{fmt0(r.requiredPRM)}</td>
               </tr>
             </tbody>

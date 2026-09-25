@@ -1,15 +1,30 @@
 import ExcelJS from "exceljs";
 import type { Project } from "./types";
-import { effectiveCommonAreaTotal } from "./types";
+import { commonAreaCategory, effectiveCommonAreaTotal } from "./types";
 import { analyze } from "./calc";
+import { computeChecks } from "./calc/compliance";
 import { BRAND } from "./brand";
+import { m2ToSqft, perM2ToPerSqft } from "./units";
+import { safeFileName } from "./project-io";
 
-const HDR_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A8A" } } as const;
-const SUB_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } } as const;
+const HDR_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF33422E" } } as const;
+const SUB_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEDE9DF" } } as const;
 const HDR_FONT = { bold: true, color: { argb: "FFFFFFFF" } };
 const BOLD = { bold: true };
 
-function applyHeader(row: ExcelJS.Row) {
+const N0 = "#,##0";
+const N2 = "#,##0.00";
+const PCT = "0.0%";
+
+type Cell = string | number | null;
+
+function title(ws: ExcelJS.Worksheet, text: string, sub?: string) {
+  ws.addRow([text]).font = { bold: true, size: 14 };
+  if (sub) ws.addRow([sub]).font = { italic: true, color: { argb: "FF6B6B6B" } };
+  ws.addRow([]);
+}
+function header(ws: ExcelJS.Worksheet, cols: string[]) {
+  const row = ws.addRow(cols);
   row.eachCell((c) => {
     c.fill = HDR_FILL as ExcelJS.FillPattern;
     c.font = HDR_FONT;
@@ -17,260 +32,252 @@ function applyHeader(row: ExcelJS.Row) {
   });
   row.height = 22;
 }
-function applySubtotal(row: ExcelJS.Row) {
+function section(ws: ExcelJS.Worksheet, text: string) {
+  ws.addRow([]);
+  ws.addRow([text]).font = BOLD;
+}
+function subtotal(row: ExcelJS.Row) {
   row.eachCell((c) => {
     c.fill = SUB_FILL as ExcelJS.FillPattern;
     c.font = BOLD;
   });
 }
-function setColWidths(ws: ExcelJS.Worksheet, widths: number[]) {
-  widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+/** Add a row and apply number formats per column (1-based index → format). */
+function add(ws: ExcelJS.Worksheet, values: Cell[], formats: Record<number, string> = {}) {
+  const row = ws.addRow(values);
+  for (const [col, fmt] of Object.entries(formats)) row.getCell(Number(col)).numFmt = fmt;
+  return row;
 }
+function widths(ws: ExcelJS.Worksheet, w: number[]) {
+  w.forEach((width, i) => {
+    ws.getColumn(i + 1).width = width;
+  });
+}
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
-export async function exportToExcel(project: Project) {
+/** Build the multi-sheet feasibility workbook (no browser APIs — also used by the tests). */
+export function buildWorkbook(project: Project): ExcelJS.Workbook {
   const r = analyze(project);
+  const checks = computeChecks(project, r);
+  const { program: p, parking: k, lifts: l, garbage: g, economic: e } = r;
   const wb = new ExcelJS.Workbook();
   wb.creator = BRAND.productName;
   wb.created = new Date();
+  const stamp = `${BRAND.productName} · exported ${new Date().toLocaleDateString("en-GB")}`;
 
-  // ===== 1. Setup =====
-  const wsSetup = wb.addWorksheet("0.Setup");
-  wsSetup.addRow([`PROJECT: ${project.name}`]);
-  wsSetup.getCell("A1").font = { bold: true, size: 14 };
-  wsSetup.addRow([]);
-  wsSetup.addRow(["Field", "Value"]);
-  applyHeader(wsSetup.lastRow!);
-  const setupRows: [string, string | number][] = [
-    ["Use", project.use],
-    ["Dubai zone", project.zone],
-    ["Plot area (m²)", project.plotArea],
-    ["Number of floors", project.numFloors],
-    ["Floor height (m)", project.floorHeight],
-    ["Shafts per unit (m²)", project.shaftPerUnit],
-    ["PRM parking %", project.prmPercent],
-    ["Total GFA (m²)", Number(r.program.totalGFABuilding.toFixed(2))],
-    ["Total BUA (m²)", Number(r.program.totalBUABuilding.toFixed(2))],
-    ["FAR", Number(r.program.far.toFixed(3))],
+  // ===== 0. Setup =====
+  const wsS = wb.addWorksheet("0.Setup");
+  title(wsS, `PROJECT: ${project.name}`, stamp);
+  header(wsS, ["Field", "Value", "Unit"]);
+  const setupRows: [string, Cell, string, string?][] = [
+    ["Area / community", project.zone || "—", ""],
+    ["Plot number", project.plotNumber ?? "—", ""],
+    ["Plot area", project.plotArea, "m²", N2],
+    ["Plot area", r2(m2ToSqft(project.plotArea)), "sq ft", N0],
+    ["Residential floors", project.numFloors, "", N0],
+    ["Floor-to-floor height", project.floorHeight, "m", N2],
+    ["Shafts per unit", project.shaftPerUnit, "m²", N2],
+    ["Accessible (PRM) parking", project.prmPercent, "%", PCT],
+    ["Permitted GFA", project.targetGFA ?? "—", "m²", N2],
+    ["Max FAR", project.maxFAR ?? "—", "", N2],
+    ["Max height", project.maxHeightM ?? "—", "m", N2],
+    ["Latitude", project.latitude ?? "—", "°"],
+    ["Longitude", project.longitude ?? "—", "°"],
+    ["Total GFA", r2(p.totalGFABuilding), "m²", N2],
+    ["Total BUA", r2(p.totalBUABuilding), "m²", N2],
+    ["Total sellable (incl. balconies)", r2(p.totalSellable), "m²", N2],
+    ["FAR", Number(p.far.toFixed(3)), "", "0.000"],
   ];
-  setupRows.forEach((row) => wsSetup.addRow(row));
-  setColWidths(wsSetup, [32, 24]);
+  for (const [label, value, unit, fmt] of setupRows) add(wsS, [label, value, unit], fmt && typeof value === "number" ? { 2: fmt } : {});
+  widths(wsS, [34, 22, 10]);
 
-  // ===== 1.Parking =====
-  const wsP = wb.addWorksheet("1.Parking");
-  wsP.addRow([`PARKING SPACES INVENTORY — ${project.name.toUpperCase()}`]);
-  wsP.getCell("A1").font = { bold: true, size: 14 };
-  wsP.addRow([]);
-  wsP.addRow(["Level", "Standard", "PRM", "Total", "Notes"]);
-  applyHeader(wsP.lastRow!);
-  for (const lvl of r.parking.byLevel) {
-    wsP.addRow([lvl.name, lvl.standard, lvl.prm, lvl.total, ""]);
+  // ===== 1. Typologies & mix =====
+  const wsT = wb.addWorksheet("1.Typologies");
+  title(wsT, `TYPOLOGIES & UNIT MIX — ${project.name.toUpperCase()}`);
+  header(wsT, ["Typology", "Category", "Interior (m²)", "Balcony (m²)", "Sellable (m²)", "Sellable (sq ft)", "Occupancy", "Parking / unit", "Units", "% of units"]);
+  for (const ts of p.byTypology) {
+    const t = ts.typology;
+    add(
+      wsT,
+      [t.name, t.category, t.internalArea, t.balconyArea, r2(t.internalArea + t.balconyArea), Math.round(m2ToSqft(t.internalArea + t.balconyArea)), t.occupancy, t.parkingPerUnit, ts.totalUnits, ts.pctOfTotal],
+      { 3: N2, 4: N2, 5: N2, 6: N0, 9: N0, 10: PCT }
+    );
   }
-  wsP.addRow(["PROJECT TOTAL", r.parking.availableStandard, r.parking.availablePRM, r.parking.availableTotal, ""]);
-  applySubtotal(wsP.lastRow!);
+  subtotal(add(wsT, ["TOTAL", "", null, null, null, null, null, null, p.totalUnits, p.totalUnits > 0 ? 1 : 0], { 9: N0, 10: PCT }));
+  widths(wsT, [26, 12, 14, 14, 14, 16, 12, 14, 10, 12]);
 
-  wsP.addRow([]);
-  wsP.addRow(["PARKING REQUIREMENT"]);
-  wsP.lastRow!.font = BOLD;
-  wsP.addRow(["Category", "Units", "Spaces / unit", "Required", ""]);
-  applyHeader(wsP.lastRow!);
-  for (const rc of r.parking.requiredByCategory) {
-    wsP.addRow([rc.category, rc.units, rc.ratio, rc.required, ""]);
-  }
-  for (const ou of r.parking.otherUsesRequired) {
-    wsP.addRow([`Other: ${ou.name}`, ou.netArea, `${ou.ratio}/100m²`, Number(ou.required.toFixed(2)), ""]);
-  }
-  wsP.addRow(["TOTAL REQUIRED", "", "", r.parking.grandRequired, ""]);
-  applySubtotal(wsP.lastRow!);
-  wsP.addRow([`Of which PRM (${(project.prmPercent * 100).toFixed(0)}%)`, "", "", r.parking.requiredPRM, `PRM balance: ${r.parking.prmBalance}`]);
-  wsP.addRow(["BALANCE", "", "", r.parking.grandBalance, "Available − required"]);
-  applySubtotal(wsP.lastRow!);
-  setColWidths(wsP, [38, 14, 16, 14, 32]);
-
-  // ===== 2.Program =====
-  const wsProg = wb.addWorksheet("2.Program");
-  wsProg.addRow([`BUILDING PROGRAM — ${project.name.toUpperCase()}`]);
-  wsProg.getCell("A1").font = { bold: true, size: 14 };
-  wsProg.addRow([]);
-
-  wsProg.addRow(["Floor", "Typology", "Units", "Int. area (m²)", "Balcony (m²)", "Total balcony (m²)", "Sellable / unit (m²)", "Total sellable (m²)", "Total interior GFA (m²)"]);
-  applyHeader(wsProg.lastRow!);
-
+  // ===== 2. Program =====
+  const wsP = wb.addWorksheet("2.Program");
+  title(wsP, `BUILDING PROGRAM — ${project.name.toUpperCase()}`);
+  header(wsP, ["Floor", "Typology", "Units", "Int. area (m²)", "Balcony (m²)", "Total balcony (m²)", "Sellable / unit (m²)", "Total sellable (m²)", "Total interior GFA (m²)"]);
   const tById = new Map(project.typologies.map((t) => [t.id, t]));
-  for (const f of r.program.byFloor) {
-    const cells = project.program.filter((c) => c.floor === f.floor && c.count > 0);
-    for (const cell of cells) {
+  for (const f of p.byFloor) {
+    for (const cell of project.program.filter((c) => c.floor === f.floor && c.count > 0)) {
       const t = tById.get(cell.typologyId);
       if (!t) continue;
-      wsProg.addRow([
-        `Floor ${f.floor}`,
-        t.name,
-        cell.count,
-        t.internalArea,
-        t.balconyArea,
-        Number((cell.count * t.balconyArea).toFixed(2)),
-        Number((t.internalArea + t.balconyArea).toFixed(2)),
-        Number((cell.count * (t.internalArea + t.balconyArea)).toFixed(2)),
-        Number((cell.count * t.internalArea).toFixed(2)),
-      ]);
+      add(
+        wsP,
+        [`Floor ${f.floor}`, t.name, cell.count, t.internalArea, t.balconyArea, r2(cell.count * t.balconyArea), r2(t.internalArea + t.balconyArea), r2(cell.count * (t.internalArea + t.balconyArea)), r2(cell.count * t.internalArea)],
+        { 3: N0, 4: N2, 5: N2, 6: N2, 7: N2, 8: N2, 9: N2 }
+      );
     }
-    wsProg.addRow([
-      `Subtotal Floor ${f.floor}`, "", f.units, "", "", Number(f.totalBalcony.toFixed(2)), "",
-      Number(f.totalSellable.toFixed(2)), Number(f.totalInteriorGFA.toFixed(2)),
-    ]);
-    applySubtotal(wsProg.lastRow!);
+    subtotal(add(wsP, [`Subtotal Floor ${f.floor}`, "", f.units, null, null, r2(f.totalBalcony), null, r2(f.totalSellable), r2(f.totalInteriorGFA)], { 3: N0, 6: N2, 8: N2, 9: N2 }));
   }
+  wsP.addRow([]);
+  subtotal(add(wsP, ["SHAFTS DEDUCTION", "", p.totalUnits, null, null, null, null, null, -p.shaftsDeduction], { 3: N0, 9: N2 }));
+  subtotal(add(wsP, ["TOTAL RESIDENTIAL", "", p.totalUnits, null, null, r2(p.totalBalcony), null, r2(p.totalSellable), r2(p.totalInteriorGFA)], { 3: N0, 6: N2, 8: N2, 9: N2 }));
 
-  wsProg.addRow([]);
-  wsProg.addRow(["SHAFTS DEDUCTION", "", r.program.totalUnits, "", "", "", "", "", -r.program.shaftsDeduction]);
-  applySubtotal(wsProg.lastRow!);
-  wsProg.addRow(["TOTAL RESIDENTIAL", "", r.program.totalUnits, "", "", Number(r.program.totalBalcony.toFixed(2)), "", Number(r.program.totalSellable.toFixed(2)), Number(r.program.totalInteriorGFA.toFixed(2))]);
-  applySubtotal(wsProg.lastRow!);
-
-  wsProg.addRow([]);
-  wsProg.addRow(["COMMON AREAS & SERVICES"]);
-  wsProg.lastRow!.font = BOLD;
-  wsProg.addRow(["Element", "Area (m²)", "Floors", "Total (m²)", "Counts as GFA", "Notes"]);
-  applyHeader(wsProg.lastRow!);
+  section(wsP, "COMMON AREAS & SERVICES");
+  header(wsP, ["Element", project.commonAreasInputMode === "percentage" ? "% of GFA" : "Area (m²)", "Floors", "Total (m²)", "Category", "Notes"]);
   for (const c of project.commonAreas) {
-    const cat = (c.category ?? (c.countAsGFA === false ? "OPEN" : "GFA"));
-    const totalArea = effectiveCommonAreaTotal(c, project);
-    wsProg.addRow([c.name, c.area, c.floors, Number(totalArea.toFixed(2)), cat, c.notes ?? ""]);
+    const pctMode = project.commonAreasInputMode === "percentage";
+    add(wsP, [c.name, c.area, pctMode ? null : c.floors, r2(effectiveCommonAreaTotal(c, project)), commonAreaCategory(c), c.notes ?? ""], { 2: pctMode ? PCT : N2, 3: N0, 4: N2 });
   }
-  wsProg.addRow(["Subtotal · GFA", "", "", Number(r.program.commonAreasGFA.toFixed(2))]);
-  applySubtotal(wsProg.lastRow!);
-  wsProg.addRow(["Subtotal · BUA only", "", "", Number(r.program.commonAreasBUAonly.toFixed(2))]);
-  wsProg.addRow(["Subtotal · Open air", "", "", Number(r.program.commonAreasOpen.toFixed(2))]);
+  subtotal(add(wsP, ["Subtotal · GFA", null, null, r2(p.commonAreasGFA)], { 4: N2 }));
+  add(wsP, ["Subtotal · BUA only", null, null, r2(p.commonAreasBUAonly)], { 4: N2 });
+  add(wsP, ["Subtotal · Open air", null, null, r2(p.commonAreasOpen)], { 4: N2 });
+  wsP.addRow([]);
+  subtotal(add(wsP, ["TOTAL GFA BUILDING", null, null, r2(p.totalGFABuilding), `FAR ${p.far.toFixed(3)}`], { 4: N2 }));
+  subtotal(add(wsP, ["TOTAL BUA BUILDING", null, null, r2(p.totalBUABuilding), "Includes balconies + BUA-only commons"], { 4: N2 }));
 
-  wsProg.addRow([]);
-  wsProg.addRow(["TOTAL GFA BUILDING", "", "", Number(r.program.totalGFABuilding.toFixed(2)), `FAR ${r.program.far.toFixed(3)}`]);
-  applySubtotal(wsProg.lastRow!);
-  wsProg.addRow(["TOTAL BUA BUILDING", "", "", Number(r.program.totalBUABuilding.toFixed(2)), "Includes balconies + BUA-only commons"]);
-  applySubtotal(wsProg.lastRow!);
-
-  wsProg.addRow([]);
-  wsProg.addRow(["EFFICIENCY"]);
-  wsProg.lastRow!.font = BOLD;
-  wsProg.addRow(["Category", "GFA (m²)", "% of Total GFA"]);
-  applyHeader(wsProg.lastRow!);
-  const eff = r.program.efficiency;
+  section(wsP, "EFFICIENCY");
+  header(wsP, ["Category", "GFA (m²)", "% of Total GFA"]);
+  const eff = p.efficiency;
   const effRows: [string, number, number][] = [
-    ["Residential (net of shafts)", Number(eff.residentialNetGFA.toFixed(2)), Number(eff.residentialNetPct.toFixed(4))],
-    ["Circulation", Number(eff.circulationGFA.toFixed(2)), Number(eff.circulationPct.toFixed(4))],
-    ["Services / MEP", Number(eff.servicesGFA.toFixed(2)), Number(eff.servicesPct.toFixed(4))],
-    ["Amenities (GFA)", Number(eff.amenitiesGFAarea.toFixed(2)), Number(eff.amenitiesPct.toFixed(4))],
+    ["Residential (net of shafts)", eff.residentialNetGFA, eff.residentialNetPct],
+    ["Circulation", eff.circulationGFA, eff.circulationPct],
+    ["Services / MEP", eff.servicesGFA, eff.servicesPct],
+    ["Amenities (GFA)", eff.amenitiesGFAarea, eff.amenitiesPct],
   ];
-  effRows.forEach((row) => {
-    const r = wsProg.addRow(row);
-    r.getCell(3).numFmt = "0.0%";
-  });
-  setColWidths(wsProg, [22, 26, 12, 18, 18, 22, 22, 22, 22]);
+  for (const [label, v, pct] of effRows) add(wsP, [label, r2(v), pct], { 2: N2, 3: PCT });
+  widths(wsP, [26, 26, 12, 18, 18, 22, 22, 22, 22]);
 
-  // ===== 3.Lifts =====
-  const wsL = wb.addWorksheet("3.Lifts");
-  wsL.addRow([`LIFT CALCULATION — ${project.name.toUpperCase()} (CIBSE Guide D)`]);
-  wsL.getCell("A1").font = { bold: true, size: 14 };
-  wsL.addRow([]);
-  wsL.addRow(["STEP 1 — POPULATION BY FLOOR"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Floor", "Units", "Population"]);
-  applyHeader(wsL.lastRow!);
-  for (const f of r.lifts.byFloor) wsL.addRow([`Floor ${f.floor}`, f.units, Number(f.population.toFixed(2))]);
-  wsL.addRow(["TOTAL", r.lifts.totalUnits, Number(r.lifts.totalPopulation.toFixed(2))]);
-  applySubtotal(wsL.lastRow!);
+  // ===== 3. Parking =====
+  const wsK = wb.addWorksheet("3.Parking");
+  title(wsK, `PARKING — ${project.name.toUpperCase()}`);
+  header(wsK, ["Level", "Standard", "PRM", "Total", "Notes"]);
+  for (const lvl of project.parking) add(wsK, [lvl.name, lvl.standard, lvl.prm, lvl.standard + lvl.prm, lvl.notes ?? ""], { 2: N0, 3: N0, 4: N0 });
+  subtotal(add(wsK, ["AVAILABLE", k.availableStandard, k.availablePRM, k.availableTotal, ""], { 2: N0, 3: N0, 4: N0 }));
+  section(wsK, "REQUIREMENT");
+  header(wsK, ["Typology / use", "Units or m²", "Ratio", "Required", ""]);
+  for (const rt of k.requiredByTypology) add(wsK, [rt.typology.name, rt.units, `${rt.ratio} / unit`, r2(rt.required), rt.typology.category], { 2: N0, 4: N2 });
+  for (const ou of k.otherUsesRequired) add(wsK, [`Other: ${ou.name}`, ou.netArea, `${ou.ratio} / 100 m²`, ou.required, ""], { 2: N2, 4: N0 });
+  subtotal(add(wsK, ["TOTAL REQUIRED", null, null, k.grandRequired, ""], { 4: N0 }));
+  add(wsK, [`Of which accessible / PRM (${(project.prmPercent * 100).toFixed(1)}%)`, null, null, k.requiredPRM, `PRM balance: ${k.prmBalance}`], { 4: N0 });
+  subtotal(add(wsK, ["BALANCE", null, null, k.grandBalance, "Available − required"], { 4: N0 }));
+  widths(wsK, [40, 14, 16, 14, 32]);
 
-  wsL.addRow([]);
-  wsL.addRow(["STEP 2 — HANDLING DEMAND"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Parameter", "Value", "Notes"]);
-  applyHeader(wsL.lastRow!);
-  wsL.addRow(["Standard handling %", project.lifts.handlingPctStandard, ""]);
-  wsL.addRow(["Persons in 5 min (standard)", r.lifts.demandStandard, ""]);
-  wsL.addRow(["Premium handling %", project.lifts.handlingPctPremium, ""]);
-  wsL.addRow(["Persons in 5 min (premium)", r.lifts.demandPremium, ""]);
-
-  wsL.addRow([]);
-  wsL.addRow(["STEP 3 — CABIN CAPACITY"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Cabin (kg)", project.lifts.cabinKg]);
-  wsL.addRow(["Persons / trip @ 80%", r.lifts.personsPerTrip]);
-
-  wsL.addRow([]);
-  wsL.addRow(["STEP 4 — ROUND TRIP TIME"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Floors served", project.numFloors]);
-  wsL.addRow(["Floor height (m)", project.floorHeight]);
-  wsL.addRow(["Total travel height (m)", Number(r.lifts.totalTravelHeight.toFixed(2))]);
-  wsL.addRow(["Speed (m/s)", project.lifts.speed]);
-  wsL.addRow(["Probable stops (√N)", r.lifts.probableStops]);
-  wsL.addRow(["Time per stop (s)", project.lifts.timePerStop]);
-  wsL.addRow(["RTT (s)", r.lifts.rttSeconds]);
-
-  wsL.addRow([]);
-  wsL.addRow(["STEP 5 — CAPACITY PER LIFT"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Trips / 5 min", r.lifts.tripsPer5Min]);
-  wsL.addRow(["Capacity / lift in 5 min", r.lifts.capacityPerLift]);
-
-  wsL.addRow([]);
-  wsL.addRow(["STEP 6 — LIFTS REQUIRED"]);
-  wsL.lastRow!.font = BOLD;
-  wsL.addRow(["Criterion", "Lifts", "Notes"]);
-  applyHeader(wsL.lastRow!);
-  wsL.addRow(["CIBSE standard 5%", r.lifts.liftsCIBSEStandard, ""]);
-  wsL.addRow(["CIBSE premium 7%", r.lifts.liftsCIBSEPremium, ""]);
-  wsL.addRow([`Rule of thumb (1 per ${project.lifts.unitsPerLiftRule} units)`, r.lifts.ruleOfThumbLifts, ""]);
-  wsL.addRow([`DCD minimum (≥${project.lifts.dcdMinUnitsThreshold} units)`, r.lifts.dcdMinLifts, ""]);
-  wsL.addRow(["RECOMMENDED", r.lifts.liftsRecommended, r.lifts.governing]);
-  applySubtotal(wsL.lastRow!);
-  setColWidths(wsL, [38, 16, 32]);
-
-  // ===== 4.Garbage Room =====
-  const wsG = wb.addWorksheet("4.Garbage Room");
-  wsG.addRow([`WASTE ROOM DIMENSIONING — ${project.name.toUpperCase()}`]);
-  wsG.getCell("A1").font = { bold: true, size: 14 };
-  wsG.addRow([]);
-  wsG.addRow(["Parameter", "Value", "Unit", "Notes"]);
-  applyHeader(wsG.lastRow!);
-  wsG.addRow(["Residential GFA", Number(r.garbage.residentialGFA.toFixed(2)), "m²", "From Program"]);
-  wsG.addRow(["Daily waste generation", r.garbage.dailyWasteKg, "kg/day", "12 kg/100m²/day × GFA"]);
-  wsG.addRow(["Storage capacity (2 days)", r.garbage.storageKg, "kg", ""]);
-  wsG.addRow(["Volume required", r.garbage.volumeRequiredM3, "m³", "÷ 150 kg/m³"]);
-  wsG.addRow(["N° containers (2.5 m³)", r.garbage.containers, "units", ""]);
-  wsG.addRow(["Room width", r.garbage.roomWidthM, "m", "N × 1.37 + (N+1) × 0.15"]);
-  wsG.addRow(["Room depth", r.garbage.roomDepthM, "m", "2.04 + 0.6 clearance"]);
-  wsG.addRow(["TOTAL ROOM AREA", r.garbage.roomAreaM2, "m²", ""]);
-  applySubtotal(wsG.lastRow!);
-  setColWidths(wsG, [32, 16, 10, 36]);
-
-  // ===== 5.Conclusions =====
-  const wsC = wb.addWorksheet("5.Conclusions");
-  wsC.addRow([`PROJECT ANALYSIS — ${project.name.toUpperCase()}`]);
-  wsC.getCell("A1").font = { bold: true, size: 14 };
-  wsC.addRow([]);
-  wsC.addRow(["Area", "Status", "Detail"]);
-  applyHeader(wsC.lastRow!);
-  const checks: [string, string, string][] = [
-    ["Parking total", r.parking.grandBalance >= 0 ? "OK" : "REVIEW", `${r.parking.availableTotal} available vs ${r.parking.grandRequired} required (${r.parking.grandBalance >= 0 ? "+" : ""}${r.parking.grandBalance})`],
-    ["PRM parking", r.parking.prmBalance >= 0 ? "OK" : "REVIEW", `${r.parking.availablePRM} available vs ${r.parking.requiredPRM} required`],
-    ["Lifts", "INFO", `Recommended ${r.lifts.liftsRecommended} (${r.lifts.governing})`],
-    ["Garbage room", "INFO", `${r.garbage.containers} containers · ${r.garbage.roomAreaM2.toFixed(2)} m²`],
-    ["GFA / FAR", "INFO", `Total GFA ${r.program.totalGFABuilding.toFixed(2)} m² · FAR ${r.program.far.toFixed(3)}`],
+  // ===== 4. Lifts =====
+  const wsL = wb.addWorksheet("4.Lifts");
+  title(wsL, `LIFT CALCULATION — ${project.name.toUpperCase()}`, "CIBSE Guide D up-peak round trip: RTT = 2·H·tv + (S+1)·ts + 2·P·tp");
+  header(wsL, ["Floor", "Units", "Population"]);
+  for (const f of l.byFloor) add(wsL, [`Floor ${f.floor}`, f.units, r2(f.population)], { 2: N0, 3: N2 });
+  subtotal(add(wsL, ["TOTAL", l.totalUnits, r2(l.totalPopulation)], { 2: N0, 3: N2 }));
+  section(wsL, "ROUND TRIP");
+  header(wsL, ["Parameter", "Value", "Notes"]);
+  const liftRows: [string, number, string, string][] = [
+    ["Cabin rated load (kg)", project.lifts.cabinKg, `${l.ratedPersons} persons rated`, N0],
+    ["P — passengers per trip", l.personsPerTrip, "80 % of rated", N0],
+    ["N — floors served", l.floorsServed, "above the ground-floor lobby", N0],
+    ["Rated speed (m/s)", project.lifts.speed, "", N2],
+    ["tv — floor transit (s)", r2(l.interfloorTimeS), `${project.floorHeight} m ÷ speed`, N2],
+    ["ts — time per stop (s)", l.timePerStopS, "", N2],
+    ["tp — passenger transfer (s)", l.passengerTransferS, "", N2],
+    ["S — probable stops", r2(l.probableStops), "N·[1 − (1 − 1/N)^P]", N2],
+    ["H — highest reversal floor", r2(l.highestReversalFloor), "N − Σ(i/N)^P", N2],
+    ["RTT (s)", r2(l.rttSeconds), "", N2],
+    ["Handling per lift (persons / 5 min)", l.capacityPerLift, "300·P / RTT", N0],
+    ["Demand — standard", l.demandStandard, `${(project.lifts.handlingPctStandard * 100).toFixed(1)}% of population in 5 min`, N0],
+    ["Demand — premium", l.demandPremium, `${(project.lifts.handlingPctPremium * 100).toFixed(1)}% of population in 5 min`, N0],
   ];
-  checks.forEach((c) => wsC.addRow(c));
+  for (const [label, v, note, fmt] of liftRows) add(wsL, [label, v, note], { 2: fmt });
+  section(wsL, "LIFTS REQUIRED");
+  header(wsL, ["Criterion", "Lifts", "Notes"]);
+  add(wsL, ["CIBSE handling — standard", l.liftsCIBSEStandard, `ceil(${l.demandStandard} ÷ ${l.capacityPerLift})`], { 2: N0 });
+  add(wsL, ["CIBSE handling — premium", l.liftsCIBSEPremium, `ceil(${l.demandPremium} ÷ ${l.capacityPerLift})`], { 2: N0 });
+  add(wsL, [`CIBSE interval ≤ ${l.targetIntervalS} s`, l.liftsForInterval, `ceil(${l.rttSeconds.toFixed(1)} ÷ ${l.targetIntervalS})`], { 2: N0 });
+  add(wsL, [`Rule of thumb (1 per ${project.lifts.unitsPerLiftRule} units)`, l.ruleOfThumbLifts, ""], { 2: N0 });
+  add(wsL, [`Minimum (≥ ${project.lifts.dcdMinUnitsThreshold} units)`, l.dcdMinLifts, "Configured requirement"], { 2: N0 });
+  subtotal(add(wsL, ["RECOMMENDED", l.liftsRecommended, l.governing], { 2: N0 }));
+  add(wsL, ["Average interval (s)", r2(l.intervalAchievedS), `target ≤ ${l.targetIntervalS} s`], { 2: N2 });
+  add(wsL, ["Handling capacity achieved", l.handlingAchievedPct, "of the population in 5 min"], { 2: PCT });
+  widths(wsL, [38, 14, 44]);
+
+  // ===== 5. Waste room =====
+  const wsG = wb.addWorksheet("5.Waste room");
+  title(wsG, `WASTE ROOM — ${project.name.toUpperCase()}`, "Dubai Municipality method — parameters as set in the app");
+  header(wsG, ["Parameter", "Value", "Unit", "Notes"]);
+  add(wsG, ["Residential GFA", r2(g.residentialGFA), "m²", "Sum of unit interiors"], { 2: N2 });
+  add(wsG, ["Daily waste generation", g.dailyWasteKg, "kg/day", `${g.generationKgPer100sqmPerDay} kg / 100 m² / day × GFA`], { 2: N2 });
+  add(wsG, [`Storage (${g.storageDays} days)`, g.storageKg, "kg", ""], { 2: N2 });
+  add(wsG, ["Volume required", g.volumeRequiredM3, "m³", `÷ ${g.densityKgPerM3} kg/m³`], { 2: N2 });
+  add(wsG, [`Containers (${g.containerCapacityM3} m³)`, g.containers, "units", "Volume ÷ capacity, rounded up"], { 2: N0 });
+  add(wsG, ["Room width", g.roomWidthM, "m", `N × ${g.containerWidthM} + (N+1) × ${g.separationM}`], { 2: N2 });
+  add(wsG, ["Room depth", g.roomDepthM, "m", `${g.containerLengthM} + ${g.frontClearanceM} clearance`], { 2: N2 });
+  subtotal(add(wsG, ["TOTAL ROOM AREA", g.roomAreaM2, "m²", ""], { 2: N2 }));
+  widths(wsG, [32, 16, 10, 40]);
+
+  // ===== 6. Economics =====
+  const cur = e.currency;
+  if (e.totalRevenue > 0 || e.totalCost > 0) {
+    const wsE = wb.addWorksheet("6.Economics");
+    title(wsE, `ECONOMICS — ${project.name.toUpperCase()}`, `All amounts in ${cur}`);
+    header(wsE, ["Typology", "Units", "Sellable / unit (sq ft)", `${cur} / sq ft`, `${cur} / m²`, "Price / unit", "Revenue", "% GDV"]);
+    for (const row of e.perTypologyRevenue) {
+      add(
+        wsE,
+        [row.typology.name, row.units, Math.round(m2ToSqft(row.sellablePerUnit)), r2(perM2ToPerSqft(row.pricePerM2)), Math.round(row.pricePerM2), Math.round(row.pricePerUnit), Math.round(row.totalRevenue), row.pctOfRevenue],
+        { 2: N0, 3: N0, 4: N2, 5: N0, 6: N0, 7: N0, 8: PCT }
+      );
+    }
+    subtotal(add(wsE, ["Residential", null, null, r2(perM2ToPerSqft(e.avgPricePerM2Sellable)), Math.round(e.avgPricePerM2Sellable), Math.round(e.avgPricePerUnit), Math.round(e.residentialRevenue), null], { 4: N2, 5: N0, 6: N0, 7: N0 }));
+    add(wsE, ["Parking sales", null, null, null, null, null, Math.round(e.parkingRevenue), null], { 7: N0 });
+    add(wsE, ["Retail / F&B", null, null, null, null, null, Math.round(e.retailRevenue), null], { 7: N0 });
+    subtotal(add(wsE, ["GDV", null, null, null, null, null, Math.round(e.totalRevenue), null], { 7: N0 }));
+
+    section(wsE, "COSTS");
+    header(wsE, ["Line", "Basis", "Amount", "% TDC", "% GDV"]);
+    for (const c of e.costs) add(wsE, [c.label, c.basis, Math.round(c.amount), c.pctOfTotalCost, c.pctOfRevenue], { 3: N0, 4: PCT, 5: PCT });
+    subtotal(add(wsE, ["TOTAL DEVELOPMENT COST", "", Math.round(e.totalCost), 1, e.totalRevenue > 0 ? e.totalCost / e.totalRevenue : 0], { 3: N0, 4: PCT, 5: PCT }));
+
+    section(wsE, "FEASIBILITY");
+    header(wsE, ["Metric", "Value", "Notes"]);
+    add(wsE, ["Profit", Math.round(e.profit), "GDV − TDC"], { 2: N0 });
+    add(wsE, ["Margin on GDV", e.marginOnGDV, `target ${(e.targetMarginPct * 100).toFixed(0)}%`], { 2: PCT });
+    add(wsE, ["Margin on cost", e.marginOnCost, ""], { 2: PCT });
+    add(wsE, ["Land price / sq ft GFA", r2(e.landCostPerSqftGFA), `${Math.round(e.landCost).toLocaleString("en-US")} ${cur} land`], { 2: N2 });
+    add(wsE, ["Residual land value", Math.round(e.residualLandValue), "Max land price (before DLD fee) for the target margin"], { 2: N0 });
+    add(wsE, ["Residual land / sq ft GFA", r2(e.residualLandPerSqftGFA), ""], { 2: N2 });
+    add(wsE, ["Break-even price / sq ft sellable", r2(perM2ToPerSqft(e.costPerM2Sellable)), "Total cost ÷ sellable area"], { 2: N2 });
+    widths(wsE, [34, 30, 18, 14, 14, 14, 16, 10]);
+  }
+
+  // ===== 7. Conclusions =====
+  const wsC = wb.addWorksheet("7.Conclusions");
+  title(wsC, `PROJECT ANALYSIS — ${project.name.toUpperCase()}`, stamp);
+  header(wsC, ["Check", "Status", "Detail"]);
+  for (const c of checks) add(wsC, [c.label, c.status === "ok" ? "OK" : c.status === "fail" ? "REVIEW" : "INFO", c.detail]);
   if (project.notes) {
-    wsC.addRow([]);
-    wsC.addRow(["NOTES"]).font = BOLD;
+    section(wsC, "NOTES");
     project.notes.split("\n").forEach((line) => wsC.addRow([line]));
   }
-  setColWidths(wsC, [22, 14, 80]);
+  wsC.addRow([]);
+  wsC.addRow(["Pre-concept feasibility figures. Verify against current Dubai Municipality, Dubai Civil Defence and RTA requirements."]).font = {
+    italic: true,
+    color: { argb: "FF6B6B6B" },
+  };
+  widths(wsC, [30, 12, 90]);
 
-  const buf = await wb.xlsx.writeBuffer();
+  return wb;
+}
+
+export async function exportToExcel(project: Project) {
+  const buf = await buildWorkbook(project).xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const safe = (project.name || "project").replace(/[^\w-]+/g, "_");
   a.href = url;
-  a.download = `${safe}_analysis.xlsx`;
+  a.download = `${safeFileName(project.name)}_analysis.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

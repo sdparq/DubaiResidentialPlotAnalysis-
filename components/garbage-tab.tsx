@@ -3,6 +3,7 @@ import { useStore, useProject } from "@/lib/store";
 import { computeGarbage } from "@/lib/calc/garbage";
 import { fmt0, fmt2 } from "@/lib/format";
 import type { GarbageOverrides } from "@/lib/types";
+import NumInput from "./num-input";
 
 export default function GarbageTab() {
   const project = useProject();
@@ -17,7 +18,7 @@ export default function GarbageTab() {
   }
 
   function resetAll() {
-    if (!confirm("Reset all waste-room parameters to Dubai DM defaults?")) return;
+    if (!confirm("Reset all waste-room parameters to the Dubai Municipality defaults?")) return;
     patch({ garbage: undefined });
   }
 
@@ -40,34 +41,35 @@ export default function GarbageTab() {
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           <Field label="Generation rate (kg / 100 m² / day)" overridden={isOverridden("generationKgPer100sqmPerDay")} onClear={() => setOverride("generationKgPer100sqmPerDay", undefined)}>
-            <NumInput value={r.generationKgPer100sqmPerDay} step={0.5} onChange={(v) => setOverride("generationKgPer100sqmPerDay", v)} />
+            <NumInput value={r.generationKgPer100sqmPerDay} min={0} step={0.5} onChange={(v) => setOverride("generationKgPer100sqmPerDay", v)} />
           </Field>
           <Field label="Storage capacity (days)" overridden={isOverridden("storageDays")} onClear={() => setOverride("storageDays", undefined)}>
-            <NumInput value={r.storageDays} step={1} min={1} onChange={(v) => setOverride("storageDays", Math.max(1, Math.round(v)))} />
+            <NumInput value={r.storageDays} integer min={1} max={14} onChange={(v) => setOverride("storageDays", v)} />
           </Field>
           <Field label="Waste density (kg / m³)" overridden={isOverridden("densityKgPerM3")} onClear={() => setOverride("densityKgPerM3", undefined)}>
-            <NumInput value={r.densityKgPerM3} step={5} onChange={(v) => setOverride("densityKgPerM3", v)} />
+            <NumInput value={r.densityKgPerM3} min={1} step={5} onChange={(v) => setOverride("densityKgPerM3", v)} />
           </Field>
           <Field label="Container capacity (m³)" overridden={isOverridden("containerCapacityM3")} onClear={() => setOverride("containerCapacityM3", undefined)}>
-            <NumInput value={r.containerCapacityM3} step={0.1} onChange={(v) => setOverride("containerCapacityM3", v)} />
+            <NumInput value={r.containerCapacityM3} min={0.1} step={0.1} onChange={(v) => setOverride("containerCapacityM3", v)} />
           </Field>
           <Field label="Container width (m)" overridden={isOverridden("containerWidthM")} onClear={() => setOverride("containerWidthM", undefined)}>
-            <NumInput value={r.containerWidthM} step={0.01} onChange={(v) => setOverride("containerWidthM", v)} />
+            <NumInput value={r.containerWidthM} min={0} step={0.05} onChange={(v) => setOverride("containerWidthM", v)} />
           </Field>
           <Field label="Container length (m)" overridden={isOverridden("containerLengthM")} onClear={() => setOverride("containerLengthM", undefined)}>
-            <NumInput value={r.containerLengthM} step={0.01} onChange={(v) => setOverride("containerLengthM", v)} />
+            <NumInput value={r.containerLengthM} min={0} step={0.05} onChange={(v) => setOverride("containerLengthM", v)} />
           </Field>
           <Field label="Separation between containers (m)" overridden={isOverridden("separationM")} onClear={() => setOverride("separationM", undefined)}>
-            <NumInput value={r.separationM} step={0.01} onChange={(v) => setOverride("separationM", v)} />
+            <NumInput value={r.separationM} min={0} step={0.05} onChange={(v) => setOverride("separationM", v)} />
           </Field>
           <Field label="Front clearance (m)" overridden={isOverridden("frontClearanceM")} onClear={() => setOverride("frontClearanceM", undefined)}>
-            <NumInput value={r.frontClearanceM} step={0.05} onChange={(v) => setOverride("frontClearanceM", v)} />
+            <NumInput value={r.frontClearanceM} min={0} step={0.05} onChange={(v) => setOverride("frontClearanceM", v)} />
           </Field>
         </div>
       </div>
 
       <div className="card">
         <h2 className="section-title mb-5">Calculation</h2>
+        <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "620px" }}>
         <table className="tbl w-full">
           <colgroup>
             <col />
@@ -129,6 +131,7 @@ export default function GarbageTab() {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-3 gap-3">
@@ -167,22 +170,6 @@ function Field({ label, children, overridden, onClear }: { label: string; childr
       </span>
       {children}
     </label>
-  );
-}
-
-function NumInput({ value, onChange, step = 1, min, suffix }: { value: number; onChange: (v: number) => void; step?: number; min?: number; suffix?: string }) {
-  return (
-    <div className="relative">
-      <input
-        type="number"
-        step={step}
-        min={min}
-        className="cell-input pr-9"
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-      />
-      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-400">{suffix}</span>}
-    </div>
   );
 }
 

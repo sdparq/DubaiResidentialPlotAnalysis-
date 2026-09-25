@@ -654,9 +654,31 @@ export function computeMomentShadow(
 }
 
 export function dayOfYearFromDate(date: Date): number {
-  const start = new Date(Date.UTC(date.getFullYear(), 0, 0));
-  const diff = date.getTime() - start.getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
+  const start = Date.UTC(date.getFullYear(), 0, 0);
+  const day = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.round((day - start) / (1000 * 60 * 60 * 24));
+}
+
+/** Day of year (1–366) for an ISO calendar date "YYYY-MM-DD", independent of the browser time zone. */
+export function dayOfYearFromISODate(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return 172; // 21 June
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(y, 0, 0)) / 86_400_000);
+}
+
+/** UAE clocks run on UTC+4 all year (no daylight saving) — standard meridian 60° E. */
+export const UAE_UTC_OFFSET_H = 4;
+
+/**
+ * Convert local clock time in the UAE into apparent solar time at the plot's longitude, applying
+ * the longitude correction and the equation of time. In Dubai (≈55.3° E) solar noon falls around
+ * 12:15–12:35 on the clock depending on the season.
+ */
+export function uaeClockToSolarHour(clockHour: number, longitudeDeg: number, dayOfYear: number): number {
+  const b = (2 * Math.PI * (dayOfYear - 81)) / 364;
+  const equationOfTimeMin = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b);
+  const standardMeridian = 15 * UAE_UTC_OFFSET_H;
+  return clockHour + (4 * (longitudeDeg - standardMeridian) + equationOfTimeMin) / 60;
 }
 
 /* -------------------------------------------------------------------------- */

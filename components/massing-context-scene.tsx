@@ -1,5 +1,5 @@
 "use client";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Edges, Line, TransformControls } from "@react-three/drei";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -8,6 +8,7 @@ import { polygonBBox } from "@/lib/geom";
 import type { Volume } from "@/lib/massing";
 import type { CustomNeighbor } from "@/lib/types";
 import { renderSchemeWithGemini, DEFAULT_SCHEME_PROMPT } from "@/lib/ai-render";
+import { fetchOsmBuildings, type OsmBuilding } from "@/lib/osm";
 
 export interface ContextSceneProps {
   plot: Point[];
@@ -70,24 +71,8 @@ function lonLatToWorldPx(lon: number, lat: number, zoom: number): { x: number; y
   const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n * TILE_PX;
   return { x, y };
 }
-const M_PER_DEG_LAT = 111320;
-const metersPerDegLng = (latDeg: number) => 111320 * Math.cos((latDeg * Math.PI) / 180);
 const metersPerPixel = (lat: number, zoom: number) =>
   (156543.03 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
-function latLngToLocalXY(lat: number, lng: number, originLat: number, originLng: number) {
-  return {
-    x: (lng - originLng) * metersPerDegLng(originLat),
-    y: (lat - originLat) * M_PER_DEG_LAT,
-  };
-}
-
-interface OsmBuilding {
-  id: string;
-  polygon: Point[];
-  defaultHeight: number;
-  name?: string;
-}
-
 interface ContextGround {
   texture: THREE.Texture;
   sizeM: number;
@@ -248,24 +233,18 @@ export default function MassingContextScene(props: ContextSceneProps) {
   }, [latitude, longitude, contextRadiusM, mapStyle]);
 
   const [osmBuildings, setOsmBuildings] = useState<OsmBuilding[]>([]);
+  const [osmError, setOsmError] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    async function fetchOSM() {
-      try {
-        const radius = Math.round(contextRadiusM);
-        const query = `[out:json][timeout:25];way[building](around:${radius},${latitude},${longitude});(._;>;);out;`;
-        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`OSM fetch ${res.status}`);
-        const data = (await res.json()) as { elements: OsmElement[] };
-        if (cancelled) return;
-        setOsmBuildings(parseOsm(data.elements, latitude, longitude));
-      } catch {
-        if (!cancelled) setOsmBuildings([]);
-      }
-    }
-    fetchOSM();
-    return () => { cancelled = true; };
+    const ctrl = new AbortController();
+    setOsmError(false);
+    fetchOsmBuildings(latitude, longitude, contextRadiusM, ctrl.signal)
+      .then(setOsmBuildings)
+      .catch(() => {
+        if (ctrl.signal.aborted) return;
+        setOsmBuildings([]);
+        setOsmError(true);
+      });
+    return () => ctrl.abort();
   }, [latitude, longitude, contextRadiusM]);
 
   const hidden = useMemo(() => new Set(nearbyHidden), [nearbyHidden]);
@@ -305,6 +284,7 @@ export default function MassingContextScene(props: ContextSceneProps) {
         dpr={[1, 2]}
         onPointerMissed={() => setSelection(null)}
       >
+        <InitialZoom span={Math.max(maxDim * 4, 300)} />
         <ambientLight intensity={0.8} />
         <directionalLight position={[300, 500, 200]} intensity={0.85} castShadow />
 
@@ -479,7 +459,7 @@ export default function MassingContextScene(props: ContextSceneProps) {
 
       {/* Map style + position controls (top-left, only when no building is selected) */}
       {!selectedOsm && !selectedCustom && ground && (
-        <div className="absolute top-2 left-2 grid gap-2 max-w-[260px]">
+        <div className="absolute top-2 left-2 grid gap-2 max-w-[260px] max-h-[calc(100%-2.5rem)] overflow-y-auto no-scrollbar">
           <div className="inline-flex border border-ink-200 bg-white/95 shadow-sm">
             {(["topo", "satellite", "schematic"] as MapStyle[]).map((s) => (
               <button
@@ -510,7 +490,7 @@ export default function MassingContextScene(props: ContextSceneProps) {
                     type="number"
                     step={0.5}
                     className="cell-input text-right !py-1 !px-1.5 !text-[11px]"
-                    value={buildingXOffsetM.toFixed(1)}
+                    value={Number(buildingXOffsetM.toFixed(1))}
                     onChange={(e) => {
                       const n = parseFloat(e.target.value);
                       if (Number.isFinite(n)) onSetBuildingOffset(n, buildingZOffsetM);
@@ -523,7 +503,7 @@ export default function MassingContextScene(props: ContextSceneProps) {
                     type="number"
                     step={0.5}
                     className="cell-input text-right !py-1 !px-1.5 !text-[11px]"
-                    value={buildingZOffsetM.toFixed(1)}
+                    value={Number(buildingZOffsetM.toFixed(1))}
                     onChange={(e) => {
                       const n = parseFloat(e.target.value);
                       if (Number.isFinite(n)) onSetBuildingOffset(buildingXOffsetM, n);
@@ -542,6 +522,9 @@ export default function MassingContextScene(props: ContextSceneProps) {
 
           <div className="px-2 py-1 bg-white/85 text-[10px] text-ink-700 border border-ink-200">
             {osmBuildings.length + customNeighbors.length} surrounding buildings · click any to edit
+            {osmError && (
+              <div className="text-amber-800 mt-0.5">OpenStreetMap is busy or offline — neighbours not loaded. Add them by hand or retry later.</div>
+            )}
           </div>
           {onAddCustomNeighbor && (
             <button
@@ -556,23 +539,28 @@ export default function MassingContextScene(props: ContextSceneProps) {
 
           <div className="bg-white/95 border border-ink-200 shadow-sm p-2 grid gap-1.5 w-[260px]">
             <span className="eyebrow text-ink-500 text-[10px]">AI scheme render</span>
-            <label className="grid gap-1">
-              <span className="text-[9px] uppercase tracking-[0.10em] text-ink-500">Prompt</span>
-              <textarea
-                className="cell-input !text-[10.5px] !leading-snug !py-1.5 !px-1.5 font-mono"
-                rows={6}
-                value={aiPrompt}
-                onChange={(e) => setAiPrompt(e.target.value)}
-                spellCheck={false}
-              />
-              {aiPrompt !== DEFAULT_SCHEME_PROMPT && (
-                <button
-                  className="text-[10px] text-brand-700 hover:text-brand-900 underline justify-self-start"
-                  onClick={() => setAiPrompt(DEFAULT_SCHEME_PROMPT)}
-                  title="Restore the default prompt"
-                >Reset to default</button>
-              )}
-            </label>
+            <details className="group">
+              <summary className="cursor-pointer list-none text-[10px] text-ink-500 hover:text-ink-900 underline">
+                {aiPrompt !== DEFAULT_SCHEME_PROMPT ? "Edit prompt (customised)" : "Edit prompt"}
+              </summary>
+              <div className="grid gap-1 mt-1.5">
+                <textarea
+                  className="cell-input !text-[10.5px] !leading-snug !py-1.5 !px-1.5 font-mono"
+                  rows={6}
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  spellCheck={false}
+                  aria-label="AI render prompt"
+                />
+                {aiPrompt !== DEFAULT_SCHEME_PROMPT && (
+                  <button
+                    className="text-[10px] text-brand-700 hover:text-brand-900 underline justify-self-start"
+                    onClick={() => setAiPrompt(DEFAULT_SCHEME_PROMPT)}
+                    title="Restore the default prompt"
+                  >Reset to default</button>
+                )}
+              </div>
+            </details>
             <button
               className="px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.10em] bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-wait transition-colors"
               onClick={handleGeminiRender}
@@ -926,6 +914,26 @@ export default function MassingContextScene(props: ContextSceneProps) {
 
 /* ---------- helpers ---------- */
 
+/**
+ * Orthographic cameras start at 1 px per metre, which leaves the project as a speck in the middle of
+ * the basemap. Frame roughly `span` metres around it once, when the viewer first gets its size;
+ * after that the user's own zoom is kept.
+ */
+function InitialZoom({ span }: { span: number }) {
+  const camera = useThree((s) => s.camera);
+  const width = useThree((s) => s.size.width);
+  const height = useThree((s) => s.size.height);
+  const done = useRef(false);
+  useEffect(() => {
+    if (done.current || width === 0 || height === 0) return;
+    if (!(camera instanceof THREE.OrthographicCamera)) return;
+    camera.zoom = Math.max(0.15, Math.min(20, Math.min(width, height) / span));
+    camera.updateProjectionMatrix();
+    done.current = true;
+  }, [camera, width, height, span]);
+  return null;
+}
+
 function OsmBuildingMesh({
   polygon, height, isSelected, onSelect,
 }: { polygon: Point[]; height: number; isSelected: boolean; onSelect: () => void }) {
@@ -1054,48 +1062,3 @@ function PlotOutline({ plot }: { plot: Point[] }) {
   if (plot.length > 0) points.push([plot[0].x, 0.15, -plot[0].y]);
   return <Line points={points} color="#3f5135" lineWidth={1.6} />;
 }
-
-interface OsmNode { type: "node"; id: number; lat: number; lon: number; }
-interface OsmWay { type: "way"; id: number; nodes: number[]; tags?: Record<string, string>; }
-type OsmElement = OsmNode | OsmWay;
-
-function parseOsm(elements: OsmElement[], originLat: number, originLng: number): OsmBuilding[] {
-  const nodeMap = new Map<number, OsmNode>();
-  for (const el of elements) if (el.type === "node") nodeMap.set(el.id, el);
-  const buildings: OsmBuilding[] = [];
-  for (const el of elements) {
-    if (el.type !== "way" || !el.tags?.building) continue;
-    const polygon: Point[] = [];
-    for (const nid of el.nodes) {
-      const n = nodeMap.get(nid);
-      if (!n) continue;
-      const xy = latLngToLocalXY(n.lat, n.lon, originLat, originLng);
-      polygon.push({ x: xy.x, y: xy.y });
-    }
-    if (polygon.length >= 2) {
-      const a = polygon[0];
-      const b = polygon[polygon.length - 1];
-      if (Math.abs(a.x - b.x) < 1e-3 && Math.abs(a.y - b.y) < 1e-3) polygon.pop();
-    }
-    if (polygon.length < 3) continue;
-    const tags = el.tags;
-    let height = 0;
-    if (tags["height"]) {
-      const n = parseFloat(tags["height"]);
-      if (Number.isFinite(n)) height = n;
-    }
-    if (height <= 0 && tags["building:levels"]) {
-      const lv = parseFloat(tags["building:levels"]);
-      if (Number.isFinite(lv)) height = lv * 3.2;
-    }
-    if (height <= 0) height = 9;
-    buildings.push({
-      id: `osm-${el.id}`,
-      polygon,
-      defaultHeight: height,
-      name: tags["name"],
-    });
-  }
-  return buildings;
-}
-

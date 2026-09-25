@@ -1,6 +1,7 @@
 "use client";
 import { useStore, useProject } from "@/lib/store";
 import { fmt2, fmtPct } from "@/lib/format";
+import NumInput from "./num-input";
 import { computeProgram } from "@/lib/calc/program";
 import {
   commonAreaCategory,
@@ -104,7 +105,7 @@ export default function CommonAreasTab() {
           </div>
         )}
 
-        <div>
+        <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "820px" }}>
           <table className="tbl w-full table-fixed">
             <colgroup>
               <col style={{ width: "22%" }} />
@@ -140,39 +141,35 @@ export default function CommonAreasTab() {
                     </td>
                     <td className="cell-edit">
                       {isPctMode ? (
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step={0.05}
-                            min={0}
-                            className="cell-input text-right pr-6"
-                            value={Number(((c.area || 0) * 100).toFixed(3))}
-                            onChange={(e) => {
-                              const pct = parseFloat(e.target.value) || 0;
-                              update(c, { area: pct / 100 });
-                            }}
-                          />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-ink-400">%</span>
-                        </div>
+                        <NumInput
+                          className="cell-input text-right"
+                          suffix="%"
+                          value={Number(((c.area || 0) * 100).toFixed(3))}
+                          min={0}
+                          step={0.05}
+                          onChange={(pct) => update(c, { area: pct / 100 })}
+                          aria-label={`${c.name} share of GFA`}
+                        />
                       ) : (
-                        <input
-                          type="number"
-                          step={0.01}
+                        <NumInput
                           className="cell-input text-right"
                           value={c.area}
-                          onChange={(e) => update(c, { area: parseFloat(e.target.value) || 0 })}
+                          min={0}
+                          step={1}
+                          onChange={(v) => update(c, { area: v })}
+                          aria-label={`${c.name} area`}
                         />
                       )}
                     </td>
                     {!isPctMode && (
                       <td className="cell-edit">
-                        <input
-                          type="number"
-                          min={1}
-                          step={1}
+                        <NumInput
                           className="cell-input text-right"
                           value={c.floors}
-                          onChange={(e) => update(c, { floors: Math.max(1, Math.round(parseFloat(e.target.value) || 1)) })}
+                          integer
+                          min={1}
+                          onChange={(v) => update(c, { floors: v })}
+                          aria-label={`${c.name} floors`}
                         />
                       </td>
                     )}

@@ -111,7 +111,7 @@ export function generateVariants(input: GenerateVariantsInput): Variant[] {
   }
 
   // --- Twin tower presets ---
-  const sep = Math.sqrt(buildableArea) * 0.4;
+  const sep = Math.max(8, Math.sqrt(buildableArea) * 0.2); // clear gap between the towers
   for (const cov of [0.20, 0.30]) {
     candidates.push({
       id: `twin-${Math.round(cov * 100)}`,

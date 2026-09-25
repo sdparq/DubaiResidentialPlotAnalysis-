@@ -1,4 +1,5 @@
 import type { Project, Typology } from "../types";
+import { m2ToSqft } from "../units";
 import { computeProgram } from "./program";
 
 export interface TypologyRevenue {
@@ -38,6 +39,18 @@ export interface EconomicResult {
   marginOnGDV: number;
   /** Land as percentage of total cost */
   landSharePct: number;
+  landCost: number;
+  dldFee: number;
+  /** Land price per sq ft of GFA — how plots are quoted in Dubai. */
+  landCostPerSqftGFA: number;
+  /** Profit target on GDV used for the residual land value. */
+  targetMarginPct: number;
+  /**
+   * Residual land value: the most that can be paid for the land (before the DLD fee) while still
+   * hitting the target margin on GDV. Negative when the scheme cannot carry any land cost.
+   */
+  residualLandValue: number;
+  residualLandPerSqftGFA: number;
   /** Per-area metrics */
   avgPricePerM2Sellable: number;
   avgPricePerUnit: number;
@@ -51,7 +64,7 @@ export interface EconomicResult {
   totalSellable: number;
 }
 
-const DEFAULTS = {
+export const ECONOMIC_DEFAULTS = {
   softCostsPct: 0.06,
   marketingPct: 0.04,
   permitsPct: 0.02,
@@ -59,6 +72,8 @@ const DEFAULTS = {
   financingPct: 0.03,
   brokeragePct: 0.02,
   brandingFeePct: 0,
+  dldFeePct: 0.04,
+  targetMarginPct: 0.2,
 };
 
 export function computeEconomic(project: Project): EconomicResult {
@@ -107,14 +122,18 @@ export function computeEconomic(project: Project): EconomicResult {
   const rate = Math.max(0, cfg.constructionRatePerBUA ?? 0);
   const constructionCost = program.totalBUABuilding * rate;
 
-  const softPct = cfg.softCostsPct ?? DEFAULTS.softCostsPct;
-  const marketingPct = cfg.marketingPct ?? DEFAULTS.marketingPct;
-  const permitsPct = cfg.permitsPct ?? DEFAULTS.permitsPct;
-  const contingencyPct = cfg.contingencyPct ?? DEFAULTS.contingencyPct;
-  const financingPct = cfg.financingPct ?? DEFAULTS.financingPct;
-  const brokeragePct = cfg.brokeragePct ?? DEFAULTS.brokeragePct;
-  const brandingFeePct = cfg.brandingFeePct ?? DEFAULTS.brandingFeePct;
+  const d = ECONOMIC_DEFAULTS;
+  const softPct = cfg.softCostsPct ?? d.softCostsPct;
+  const marketingPct = cfg.marketingPct ?? d.marketingPct;
+  const permitsPct = cfg.permitsPct ?? d.permitsPct;
+  const contingencyPct = cfg.contingencyPct ?? d.contingencyPct;
+  const financingPct = cfg.financingPct ?? d.financingPct;
+  const brokeragePct = cfg.brokeragePct ?? d.brokeragePct;
+  const brandingFeePct = cfg.brandingFeePct ?? d.brandingFeePct;
+  const dldFeePct = cfg.dldFeePct ?? d.dldFeePct;
+  const targetMarginPct = cfg.targetMarginPct ?? d.targetMarginPct;
 
+  const dldFee = landCost * dldFeePct;
   const softCosts = constructionCost * softPct;
   const permitsCost = constructionCost * permitsPct;
   const contingencyCost = (constructionCost + softCosts) * contingencyPct;
@@ -123,8 +142,7 @@ export function computeEconomic(project: Project): EconomicResult {
   const brokerageCost = totalRevenue * brokeragePct;
   const brandingFee = totalRevenue * brandingFeePct;
 
-  const totalCost =
-    landCost +
+  const nonLandCost =
     constructionCost +
     softCosts +
     permitsCost +
@@ -133,19 +151,22 @@ export function computeEconomic(project: Project): EconomicResult {
     marketingCost +
     brokerageCost +
     brandingFee;
+  const totalCost = landCost + dldFee + nonLandCost;
 
+  const pctLabel = (p: number) => `${(p * 100).toFixed(1)}%`;
   const lines: { key: string; label: string; amount: number; basis: string }[] = [
     { key: "land", label: "Land acquisition", amount: landCost, basis: "Direct input" },
-    { key: "construction", label: "Construction", amount: constructionCost, basis: `BUA × ${rate.toLocaleString()} ${currency}/m²` },
-    { key: "soft", label: "Soft costs (design / consultants)", amount: softCosts, basis: `${(softPct * 100).toFixed(1)}% of construction` },
-    { key: "permits", label: "Permits & DM fees", amount: permitsCost, basis: `${(permitsPct * 100).toFixed(1)}% of construction` },
-    { key: "contingency", label: "Contingency", amount: contingencyCost, basis: `${(contingencyPct * 100).toFixed(1)}% of (construction + soft)` },
-    { key: "financing", label: "Financing during construction", amount: financingCost, basis: `${(financingPct * 100).toFixed(1)}% of construction` },
-    { key: "marketing", label: "Marketing & sales", amount: marketingCost, basis: `${(marketingPct * 100).toFixed(1)}% of GDV` },
-    { key: "brokerage", label: "Brokerage / agency", amount: brokerageCost, basis: `${(brokeragePct * 100).toFixed(1)}% of GDV` },
+    { key: "dld", label: "Land transfer fee (DLD)", amount: dldFee, basis: `${pctLabel(dldFeePct)} of land` },
+    { key: "construction", label: "Construction", amount: constructionCost, basis: `BUA × ${Math.round(rate).toLocaleString("en-US")} ${currency}/m²` },
+    { key: "soft", label: "Soft costs (design / consultants)", amount: softCosts, basis: `${pctLabel(softPct)} of construction` },
+    { key: "permits", label: "Permits & authority fees", amount: permitsCost, basis: `${pctLabel(permitsPct)} of construction` },
+    { key: "contingency", label: "Contingency", amount: contingencyCost, basis: `${pctLabel(contingencyPct)} of (construction + soft)` },
+    { key: "financing", label: "Financing during construction", amount: financingCost, basis: `${pctLabel(financingPct)} of construction` },
+    { key: "marketing", label: "Marketing & sales", amount: marketingCost, basis: `${pctLabel(marketingPct)} of GDV` },
+    { key: "brokerage", label: "Brokerage / agency", amount: brokerageCost, basis: `${pctLabel(brokeragePct)} of GDV` },
   ];
   if (brandingFeePct > 0) {
-    lines.push({ key: "branding", label: "Branding fee", amount: brandingFee, basis: `${(brandingFeePct * 100).toFixed(1)}% of GDV` });
+    lines.push({ key: "branding", label: "Branding fee", amount: brandingFee, basis: `${pctLabel(brandingFeePct)} of GDV` });
   }
   const costs: CostLine[] = lines.map((l) => ({
     ...l,
@@ -157,8 +178,13 @@ export function computeEconomic(project: Project): EconomicResult {
   const marginOnCost = totalCost > 0 ? profit / totalCost : 0;
   const marginOnGDV = totalRevenue > 0 ? profit / totalRevenue : 0;
 
+  // Residual land value: solve  GDV − (L·(1 + dld) + nonLandCost) = target · GDV  for L.
+  const residualLandValue =
+    totalRevenue > 0 ? (totalRevenue * (1 - targetMarginPct) - nonLandCost) / (1 + dldFeePct) : 0;
+
   const totalSellable = program.totalSellable;
   const totalUnits = program.totalUnits;
+  const gfaSqft = m2ToSqft(program.totalGFABuilding);
   const avgPricePerM2Sellable = totalSellable > 0 ? residentialRevenue / totalSellable : 0;
   const avgPricePerUnit = totalUnits > 0 ? residentialRevenue / totalUnits : 0;
   const costPerM2GFA = program.totalGFABuilding > 0 ? totalCost / program.totalGFABuilding : 0;
@@ -178,6 +204,12 @@ export function computeEconomic(project: Project): EconomicResult {
     marginOnCost,
     marginOnGDV,
     landSharePct: totalCost > 0 ? landCost / totalCost : 0,
+    landCost,
+    dldFee,
+    landCostPerSqftGFA: gfaSqft > 0 ? landCost / gfaSqft : 0,
+    targetMarginPct,
+    residualLandValue,
+    residualLandPerSqftGFA: gfaSqft > 0 ? residualLandValue / gfaSqft : 0,
     avgPricePerM2Sellable,
     avgPricePerUnit,
     costPerM2GFA,

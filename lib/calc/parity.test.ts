@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { PRODUCTION_CITY_SAMPLE } from "../sample";
 import { analyze } from "./index";
 
-describe("Production City — parity vs Excel", () => {
+describe("Production City sample — parity vs the source Excel", () => {
   const r = analyze(PRODUCTION_CITY_SAMPLE);
 
   it("program totals match Excel", () => {
@@ -30,20 +30,33 @@ describe("Production City — parity vs Excel", () => {
     expect(r.parking.balance).toBe(15);
   });
 
-  it("lifts (CIBSE Guide D) match Excel", () => {
+  it("lift demand and practical checks match Excel", () => {
     expect(r.lifts.totalPopulation).toBeCloseTo(682.5, 1);
     expect(r.lifts.demandStandard).toBe(35);
     expect(r.lifts.demandPremium).toBe(48);
     expect(r.lifts.personsPerTrip).toBe(13);
     expect(r.lifts.totalTravelHeight).toBeCloseTo(28.8, 1);
-    expect(r.lifts.probableStops).toBeCloseTo(2.8, 1);
-    expect(r.lifts.rttSeconds).toBeCloseTo(55.3, 1);
-    expect(r.lifts.tripsPer5Min).toBeCloseTo(5.4, 1);
-    expect(r.lifts.capacityPerLift).toBe(70);
-    expect(r.lifts.liftsCIBSE).toBe(1);
     expect(r.lifts.ruleOfThumbLifts).toBe(5);
     expect(r.lifts.dcdMinLifts).toBe(3);
     expect(r.lifts.liftsRecommended).toBe(5);
+  });
+
+  // The Excel used a √N shortcut for probable stops; the app applies the full CIBSE Guide D
+  // round-trip equation instead. Values below were checked by hand:
+  //   N = 8, P = 13, t_v = 3.6 / 1.75 = 2.057 s, t_s = 8 s, t_p = 1.2 s
+  //   S = 8·(1 − (7/8)^13) = 6.590       H = 8 − Σ(i/8)^13 = 7.798
+  //   RTT = 2·7.798·2.057 + 7.590·8 + 2·13·1.2 = 124.0 s
+  it("lifts follow the CIBSE Guide D round-trip time", () => {
+    expect(r.lifts.probableStops).toBeCloseTo(6.59, 2);
+    expect(r.lifts.highestReversalFloor).toBeCloseTo(7.798, 2);
+    expect(r.lifts.rttSeconds).toBeCloseTo(124.0, 1);
+    expect(r.lifts.capacityPerLift).toBe(31);
+    expect(r.lifts.liftsCIBSEStandard).toBe(2);
+    expect(r.lifts.liftsCIBSEPremium).toBe(2);
+    expect(r.lifts.liftsForInterval).toBe(3);
+    expect(r.lifts.liftsCIBSE).toBe(3);
+    expect(r.lifts.governing).toMatch(/Rule of thumb/);
+    expect(r.lifts.intervalAchievedS).toBeCloseTo(24.8, 1);
   });
 
   it("garbage room (Dubai DM) matches Excel", () => {

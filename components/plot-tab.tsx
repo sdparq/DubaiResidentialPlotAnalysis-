@@ -194,8 +194,8 @@ export default function PlotTab() {
         <div className="mb-5">
           <h2 className="section-title">Plot drawing</h2>
           <p className="section-sub">
-            Upload the affection plan or plot drawing, then trace the parcel boundary by clicking each corner and
-            calibrate the scale by clicking two known points and entering the cota.
+            Upload the affection plan or plot drawing (PDF or image), trace the parcel boundary by clicking each
+            corner, then calibrate the scale by clicking two points whose distance you know.
           </p>
         </div>
 
@@ -321,7 +321,7 @@ export default function PlotTab() {
                 title="Calibrate scale"
                 done={isCalibrated}
                 disabled={!hasTrace}
-                description="Click two points on the drawing whose distance you can read from the cotas, then enter that distance in metres."
+                description="Click two points on the drawing whose distance you can read from its dimensions, then enter that distance in metres."
               >
                 {!hasTrace ? (
                   <div className="text-[11px] text-ink-400">Trace the polygon first</div>
@@ -372,10 +372,21 @@ export default function PlotTab() {
               {isCalibrated && (
                 <div className="border border-emerald-200 bg-emerald-50 text-emerald-900 p-3 text-xs">
                   <div className="font-semibold uppercase tracking-[0.10em] text-[10.5px]">Polygon ready</div>
-                  <div className="mt-1">Plot area: <strong>{fmt2(livePolygonArea)} m²</strong></div>
+                  <div className="mt-1">Traced area: <strong>{fmt2(livePolygonArea)} m²</strong></div>
                   <div className="text-emerald-800/80 mt-0.5">
-                    Saved to Massing tab in polygon mode.
+                    Saved to the Massing tab in polygon mode.
                   </div>
+                  {project.plotArea > 0 && Math.abs(project.plotArea - livePolygonArea) / project.plotArea > 0.005 && (
+                    <div className="mt-2 pt-2 border-t border-emerald-200 text-emerald-900">
+                      Setup plot area is <strong>{fmt2(project.plotArea)} m²</strong> ({(((livePolygonArea - project.plotArea) / project.plotArea) * 100).toFixed(1)}% difference).
+                      <button
+                        className="block mt-1 underline font-medium hover:text-emerald-700"
+                        onClick={() => patch({ plotArea: Math.round(livePolygonArea * 100) / 100 })}
+                      >
+                        Use the traced area instead
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

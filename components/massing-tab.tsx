@@ -6,19 +6,11 @@ import { computeProgram } from "@/lib/calc/program";
 import { fmt2, fmtPct } from "@/lib/format";
 import PlanTrace from "./plan-trace";
 import VariantCard from "./variant-card";
-import {
-  type Point,
-  edgeLengths,
-  offsetPolygon,
-  polygonArea,
-  polygonCentroid,
-  polygonPerimeter,
-  rectanglePlotPolygon,
-  rectangleToPolygon,
-} from "@/lib/geom";
+import { type Point, edgeLengths, polygonCentroid, polygonPerimeter, rectanglePlotPolygon } from "@/lib/geom";
 import { edgeColor } from "@/lib/edge-colors";
 import { buildMassing, type CornerPosition, type MassingShape, type SidePosition, type TowerPosition } from "@/lib/massing";
-import { generateVariants, type Variant, type VariantParams } from "@/lib/variants";
+import { deriveMassingInputs, deriveSite, groundFootprintArea } from "@/lib/site";
+import { generateVariants, type Variant } from "@/lib/variants";
 
 const MassingScene = dynamic(() => import("./massing-scene"), {
   ssr: false,
@@ -38,7 +30,7 @@ const MassingContextScene = dynamic(() => import("./massing-context-scene"), {
     <div className="aspect-[4/3] border border-ink-200 bg-bone-100 flex items-center justify-center">
       <div className="text-center">
         <div className="mx-auto w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-3" />
-        <div className="text-xs text-ink-500 uppercase tracking-[0.18em]">Loading 3D Tiles…</div>
+        <div className="text-xs text-ink-500 uppercase tracking-[0.18em]">Loading site context…</div>
       </div>
     </div>
   ),
@@ -49,113 +41,49 @@ export default function MassingTab() {
   const patch = useStore((s) => s.patch);
   const program = computeProgram(project);
 
-  const mode = project.plotMode === "polygon" ? "polygon" : "rectangular";
+  // Plot, buildable area and massing parameters come from lib/site so the Sun & Views tab
+  // analyses exactly the same building.
+  const site = useMemo(() => deriveSite(project), [project]);
+  const setup = useMemo(
+    () => deriveMassingInputs(project, site, program.totalGFABuilding),
+    [project, site, program.totalGFABuilding]
+  );
+  const massing = useMemo(() => buildMassing(setup.inputs), [setup]);
 
-  // ---- derive plot polygon ----
-  const sqRoot = project.plotArea > 0 ? Math.sqrt(project.plotArea) : 50;
-  const frontage = project.plotFrontage && project.plotFrontage > 0 ? project.plotFrontage : sqRoot;
-  const depth = project.plotDepth && project.plotDepth > 0 ? project.plotDepth : sqRoot;
-
-  const sFront = project.setbackFront ?? 0;
-  const sRear = project.setbackRear ?? 0;
-  const sSide = project.setbackSide ?? 0;
-  const sUniform = project.setbackUniform ?? Math.max(sFront, sRear, sSide, 3);
-
-  const plotPoly: Point[] = useMemo(() => {
-    if (mode === "polygon" && project.plotPolygon && project.plotPolygon.length >= 3) {
-      return project.plotPolygon;
-    }
-    return rectanglePlotPolygon(frontage, depth);
-  }, [mode, project.plotPolygon, frontage, depth]);
-
-  // Per-edge setbacks. If user has set them and length matches, use them; otherwise fall back to uniform.
-  const setbackPerEdge: number[] = useMemo(() => {
-    if (mode !== "polygon") return [];
-    const n = plotPoly.length;
-    if (project.setbackPerEdge && project.setbackPerEdge.length === n) return project.setbackPerEdge;
-    return new Array(n).fill(sUniform);
-  }, [mode, plotPoly.length, project.setbackPerEdge, sUniform]);
-
-  const buildablePoly: Point[] = useMemo(() => {
-    if (mode === "polygon") return offsetPolygon(plotPoly, setbackPerEdge);
-    return rectangleToPolygon(frontage, depth, sFront, sRear, sSide);
-  }, [mode, plotPoly, setbackPerEdge, frontage, depth, sFront, sRear, sSide]);
+  const {
+    mode,
+    plot: plotPoly,
+    buildable: buildablePoly,
+    setbackPerEdge,
+    setbackUniform: sUniform,
+    frontage,
+    depth,
+    squareFallback: sqRoot,
+    plotArea: plotPolyArea,
+    buildableArea,
+  } = site;
+  const { programFloorArea, effFloors, effFloorArea, buildingHeight } = setup;
+  const {
+    shape,
+    podiumFloors,
+    podiumCoverage,
+    towerCoverage,
+    towerPosition,
+    courtyardRatio,
+    twinSeparation,
+    twinCoverage,
+    steppedSteps,
+    steppedShrink,
+    lNotchPosition,
+    lNotchRatio,
+    uOpening,
+    uArmRatio,
+    uNotchDepth,
+  } = setup.inputs;
 
   const edgeColors = useMemo(
     () => (mode === "polygon" ? plotPoly.map((_, i) => edgeColor(i)) : undefined),
     [mode, plotPoly]
-  );
-
-  const plotPolyArea = polygonArea(plotPoly);
-  const buildableArea = polygonArea(buildablePoly);
-
-  // Effective volume controls — overrides on top of program-derived values.
-  const programFloorArea = project.numFloors > 0 ? program.totalGFABuilding / project.numFloors : 0;
-  const effFloors = project.massingFloors ?? project.numFloors;
-  const effFloorArea = project.massingFloorArea ?? programFloorArea;
-  const buildingHeight = effFloors * project.floorHeight;
-
-  // Shape preset + parameters with sensible defaults
-  const shape: MassingShape = project.massingShape ?? "block";
-  const podiumFloors = project.podiumFloors ?? Math.min(2, effFloors);
-  const podiumCoverage = project.podiumCoverage ?? 0.95;
-  const towerCoverage = project.towerCoverage ?? 0.45;
-  const towerPosition: TowerPosition = project.towerPosition ?? "C";
-  const courtyardRatio = project.courtyardRatio ?? 0.18;
-  const twinSeparation = project.twinSeparation ?? Math.max(8, Math.sqrt(buildableArea) * 0.25);
-  const twinCoverage = project.twinCoverage ?? 0.28;
-  const steppedSteps = project.steppedSteps ?? 4;
-  const steppedShrink = project.steppedShrink ?? 0.15;
-  const lNotchPosition: CornerPosition = project.lNotchPosition ?? "NE";
-  const lNotchRatio = project.lNotchRatio ?? 0.32;
-  const uOpening: SidePosition = project.uOpening ?? "N";
-  const uArmRatio = project.uArmRatio ?? 0.28;
-  const uNotchDepth = project.uNotchDepth ?? 0.55;
-
-  const massing = useMemo(
-    () =>
-      buildMassing({
-        buildable: buildablePoly,
-        effFloors,
-        effFloorArea,
-        floorHeight: project.floorHeight,
-        shape,
-        podiumFloors,
-        podiumCoverage,
-        towerCoverage,
-        towerPosition,
-        courtyardRatio,
-        twinSeparation,
-        twinCoverage,
-        steppedSteps,
-        steppedShrink,
-        lNotchPosition,
-        lNotchRatio,
-        uOpening,
-        uArmRatio,
-        uNotchDepth,
-      }),
-    [
-      buildablePoly,
-      effFloors,
-      effFloorArea,
-      project.floorHeight,
-      shape,
-      podiumFloors,
-      podiumCoverage,
-      towerCoverage,
-      towerPosition,
-      courtyardRatio,
-      twinSeparation,
-      twinCoverage,
-      steppedSteps,
-      steppedShrink,
-      lNotchPosition,
-      lNotchRatio,
-      uOpening,
-      uArmRatio,
-      uNotchDepth,
-    ]
   );
 
   const totalVolumeGFA = massing.totalGFA;
@@ -219,8 +147,9 @@ export default function MassingTab() {
     setActiveVariantId(v.id);
   }
   const exceedsBuildable = effFloorArea > buildableArea + 0.01 && buildableArea > 0 && shape === "block";
-  const coverageOfBuildable = buildableArea > 0 ? Math.min(1, (massing.volumes[0]?.polygon ? polygonArea(massing.volumes[0].polygon) : 0) / buildableArea) : 0;
-  const plotCoverage = plotPolyArea > 0 && massing.volumes.length > 0 ? Math.min(1, polygonArea(massing.volumes[0].polygon) / plotPolyArea) : 0;
+  const footprint = groundFootprintArea(massing.volumes);
+  const coverageOfBuildable = buildableArea > 0 ? Math.min(1, footprint / buildableArea) : 0;
+  const plotCoverage = plotPolyArea > 0 ? Math.min(1, footprint / plotPolyArea) : 0;
   const computedFar = plotPolyArea > 0 ? totalVolumeGFA / plotPolyArea : 0;
   const programVsVolumeDelta = totalVolumeGFA - program.totalGFABuilding;
   // ---- vertex editor handlers ----
@@ -306,7 +235,6 @@ export default function MassingTab() {
                   latitude={project.latitude!}
                   longitude={project.longitude!}
                   northHeadingDeg={project.northHeadingDeg ?? 0}
-                  buildingYOffsetM={project.groundElevationM ?? 0}
                   buildingXOffsetM={project.contextOffsetXM ?? 0}
                   buildingZOffsetM={project.contextOffsetZM ?? 0}
                   mapStyle={project.contextMapStyle ?? "topo"}
@@ -754,13 +682,13 @@ function ShapeParams({
   if (shape === "twinTowers") {
     return (
       <div className="grid gap-3">
-        <Field label="Tower separation (m)">
+        <Field label="Clear gap between towers (m)">
           <input
             type="number"
             step={0.5}
             min={0}
             className="cell-input text-right"
-            value={twinSeparation.toFixed(1)}
+            value={Number(twinSeparation.toFixed(1))}
             onChange={(e) => onPatch({ twinSeparation: Math.max(0, parseFloat(e.target.value) || 0) })}
           />
         </Field>
@@ -771,7 +699,8 @@ function ShapeParams({
           min={0.05} max={0.45} step={0.01}
         />
         <p className="text-[11px] text-ink-500 leading-relaxed">
-          Two identical towers spaced along the X axis. Increase the separation to reveal a courtyard between them.
+          Two towers side by side along the plot&apos;s X axis, each inside its own half of the buildable area. The gap
+          is the clear distance between them.
         </p>
       </div>
     );

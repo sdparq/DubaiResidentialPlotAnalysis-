@@ -4,18 +4,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProject } from "@/lib/store";
 import { computeProgram } from "@/lib/calc/program";
 import { fmt0, fmtPct } from "@/lib/format";
-import { buildMassing } from "@/lib/massing";
-import { offsetPolygon, rectanglePlotPolygon, rectangleToPolygon, type Point } from "@/lib/geom";
+import type { Volume } from "@/lib/massing";
+import type { CustomNeighbor } from "@/lib/types";
+import { deriveMassing, deriveSite, volumesToGeoFrame } from "@/lib/site";
 import {
   computeAnnualSolar,
   computeMomentShadow,
   computeViewQuality,
   customNeighborBoxes,
-  dayOfYearFromDate,
+  dayOfYearFromISODate,
   latLngToWorld,
   osmBuildingBox,
   projectBoxes,
   sampleFacadePanels,
+  uaeClockToSolarHour,
   type Box,
   type ShadowResult,
   type SolarResult,
@@ -40,65 +42,20 @@ const SUN_HOURS = 12;
 
 export default function PhysicsTab() {
   const project = useProject();
-  const program = computeProgram(project);
+  const programGFA = computeProgram(project).totalGFABuilding;
 
-  // Reproduce the same plot/buildable/volumes the Massing tab computes.
-  const sqRoot = project.plotArea > 0 ? Math.sqrt(project.plotArea) : 50;
-  const frontage = project.plotFrontage && project.plotFrontage > 0 ? project.plotFrontage : sqRoot;
-  const depth = project.plotDepth && project.plotDepth > 0 ? project.plotDepth : sqRoot;
-  const sFront = project.setbackFront ?? 0;
-  const sRear = project.setbackRear ?? 0;
-  const sSide = project.setbackSide ?? 0;
-  const sUniform = project.setbackUniform ?? Math.max(sFront, sRear, sSide, 3);
-
-  const plotPoly: Point[] = useMemo(() => {
-    if (project.plotMode === "polygon" && project.plotPolygon && project.plotPolygon.length >= 3) {
-      return project.plotPolygon;
-    }
-    return rectanglePlotPolygon(frontage, depth);
-  }, [project.plotMode, project.plotPolygon, frontage, depth]);
-
-  const setbackPerEdge: number[] = useMemo(() => {
-    if (project.plotMode !== "polygon") return [];
-    const n = plotPoly.length;
-    if (project.setbackPerEdge && project.setbackPerEdge.length === n) return project.setbackPerEdge;
-    return new Array(n).fill(sUniform);
-  }, [project.plotMode, plotPoly.length, project.setbackPerEdge, sUniform]);
-
-  const buildablePoly: Point[] = useMemo(() => {
-    if (project.plotMode === "polygon") return offsetPolygon(plotPoly, setbackPerEdge);
-    return rectangleToPolygon(frontage, depth, sFront, sRear, sSide);
-  }, [project.plotMode, plotPoly, setbackPerEdge, frontage, depth, sFront, sRear, sSide]);
-
-  const programFloorArea = project.numFloors > 0 ? program.totalGFABuilding / project.numFloors : 0;
-  const effFloors = project.massingFloors ?? project.numFloors;
-  const effFloorArea = project.massingFloorArea ?? programFloorArea;
-
-  const massing = useMemo(
-    () =>
-      buildMassing({
-        buildable: buildablePoly,
-        effFloors,
-        effFloorArea,
-        floorHeight: project.floorHeight,
-        shape: project.massingShape ?? "block",
-        podiumFloors: project.podiumFloors ?? Math.min(2, effFloors),
-        podiumCoverage: project.podiumCoverage ?? 0.95,
-        towerCoverage: project.towerCoverage ?? 0.45,
-        towerPosition: project.towerPosition ?? "C",
-        courtyardRatio: project.courtyardRatio ?? 0.18,
-        twinSeparation: project.twinSeparation ?? 12,
-        twinCoverage: project.twinCoverage ?? 0.28,
-        steppedSteps: project.steppedSteps ?? 4,
-        steppedShrink: project.steppedShrink ?? 0.15,
-        lNotchPosition: project.lNotchPosition ?? "NE",
-        lNotchRatio: project.lNotchRatio ?? 0.32,
-        uOpening: project.uOpening ?? "N",
-        uArmRatio: project.uArmRatio ?? 0.28,
-        uNotchDepth: project.uNotchDepth ?? 0.55,
-      }),
-    [buildablePoly, effFloors, effFloorArea, project],
-  );
+  // Same building as the Massing tab, placed in the geographic frame (x = east, y = north) with the
+  // plot's north heading and in-context offset, so façade orientations and neighbours line up.
+  const volumes = useMemo(() => {
+    const site = deriveSite(project);
+    const { massing } = deriveMassing(project, site, programGFA);
+    return volumesToGeoFrame(
+      massing.volumes,
+      project.northHeadingDeg ?? 0,
+      project.contextOffsetXM ?? 0,
+      project.contextOffsetZM ?? 0
+    );
+  }, [project, programGFA]);
 
   const hasGeo =
     typeof project.latitude === "number" &&
@@ -113,7 +70,9 @@ export default function PhysicsTab() {
         <p className="section-sub">
           See directly on the volume <strong>how much sun</strong> each façade gets and
           <strong> what can be seen</strong> from it. The building is painted with a colour
-          map so you can spot the best and worst areas at a glance.
+          map so you can spot the best and worst areas at a glance. Orientation follows the north
+          heading set in Setup; surrounding buildings come from OpenStreetMap and the neighbours you
+          added in Massing → In context.
         </p>
       </div>
 
@@ -127,7 +86,7 @@ export default function PhysicsTab() {
       )}
 
       <SunCard
-        volumes={massing.volumes}
+        volumes={volumes}
         latitude={project.latitude ?? 0}
         longitude={project.longitude ?? 0}
         customNeighbors={project.customNeighbors ?? []}
@@ -135,7 +94,7 @@ export default function PhysicsTab() {
       />
 
       <ViewsCard
-        volumes={massing.volumes}
+        volumes={volumes}
         latitude={project.latitude ?? 0}
         longitude={project.longitude ?? 0}
         customNeighbors={project.customNeighbors ?? []}
@@ -158,10 +117,10 @@ function SunCard({
   customNeighbors,
   hasGeo,
 }: {
-  volumes: ReturnType<typeof buildMassing>["volumes"];
+  volumes: Volume[];
   latitude: number;
   longitude: number;
-  customNeighbors: NonNullable<ReturnType<typeof useProject>["customNeighbors"]>;
+  customNeighbors: CustomNeighbor[];
   hasGeo: boolean;
 }) {
   const [mode, setMode] = useState<SunMode>("annual");
@@ -172,16 +131,13 @@ function SunCard({
   const [error, setError] = useState<string | null>(null);
   const [annualResult, setAnnualResult] = useState<SolarResult | null>(null);
   const [shadowResult, setShadowResult] = useState<ShadowResult | null>(null);
+  const [contextWarning, setContextWarning] = useState<string | null>(null);
 
   const buildObstacles = useCallback(async (): Promise<Box[]> => {
-    const obstacles: Box[] = [...projectBoxes(volumes)];
-    for (const cn of customNeighbors) obstacles.push(...customNeighborBoxes(cn));
-    if (hasGeo) {
-      const osm = await fetchOsmBuildings(latitude, longitude, CONTEXT_RADIUS_M);
-      for (const b of osm) obstacles.push(osmBuildingBox(b.polygon, b.defaultHeight));
-    }
+    const { obstacles, warning } = await collectObstacles(volumes, customNeighbors, latitude, longitude, CONTEXT_RADIUS_M);
+    setContextWarning(warning);
     return obstacles;
-  }, [volumes, customNeighbors, hasGeo, latitude, longitude]);
+  }, [volumes, customNeighbors, latitude, longitude]);
 
   const runAnnual = useCallback(async () => {
     setRunning(true);
@@ -211,10 +167,11 @@ function SunCard({
       if (!hasGeo) throw new Error("Set the project's latitude/longitude in Setup first.");
       const obstacles = await buildObstacles();
       const panels = sampleFacadePanels(volumes, PANEL_SIZE_M);
-      const date = new Date(`${dateStr}T00:00:00`);
-      const dayOfYear = dayOfYearFromDate(date);
+      const dayOfYear = dayOfYearFromISODate(dateStr);
+      // The slider is UAE clock time; the sun position needs apparent solar time at the plot.
+      const solarHour = uaeClockToSolarHour(hour, longitude, dayOfYear);
       await new Promise((r) => setTimeout(r, 0));
-      const r = computeMomentShadow(panels, obstacles, latitude, dayOfYear, hour);
+      const r = computeMomentShadow(panels, obstacles, latitude, dayOfYear, solarHour);
       setShadowResult(r);
       setAnnualResult(null);
     } catch (e) {
@@ -222,7 +179,7 @@ function SunCard({
     } finally {
       setRunning(false);
     }
-  }, [hasGeo, buildObstacles, volumes, latitude, dateStr, hour]);
+  }, [hasGeo, buildObstacles, volumes, latitude, longitude, dateStr, hour]);
 
   const handleRun = mode === "annual" ? runAnnual : runMoment;
   const result = mode === "annual" ? annualResult : shadowResult;
@@ -270,7 +227,7 @@ function SunCard({
       {mode === "moment" && (
         <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end mb-4">
           <label className="grid gap-1">
-            <span className="text-[10.5px] uppercase tracking-[0.10em] text-ink-500">Date &amp; time</span>
+            <span className="text-[10.5px] uppercase tracking-[0.10em] text-ink-500">Date &amp; local time (UAE, UTC+4)</span>
             <div className="flex items-center gap-3">
               <input
                 type="date"
@@ -310,9 +267,10 @@ function SunCard({
       )}
 
       {error && <div className="text-[12px] text-red-700 mb-3">{error}</div>}
+      {contextWarning && !error && <div className="text-[12px] text-amber-800 mb-3">{contextWarning}</div>}
 
       <div className="border border-ink-200">
-        <div className="aspect-[16/9] bg-bone-50">
+        <div className="aspect-[4/3] sm:aspect-[16/9] bg-bone-50">
           {result ? (
             <PhysicsScene
               volumes={volumes}
@@ -375,10 +333,10 @@ function ViewsCard({
   customNeighbors,
   hasGeo,
 }: {
-  volumes: ReturnType<typeof buildMassing>["volumes"];
+  volumes: Volume[];
   latitude: number;
   longitude: number;
-  customNeighbors: NonNullable<ReturnType<typeof useProject>["customNeighbors"]>;
+  customNeighbors: CustomNeighbor[];
   hasGeo: boolean;
 }) {
   const [landmarkLat, setLandmarkLat] = useState<number | "">("");
@@ -386,6 +344,7 @@ function ViewsCard({
   const [landmarkY, setLandmarkY] = useState(20);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [result, setResult] = useState<ViewQualityResult | null>(null);
 
   const run = useCallback(async () => {
@@ -396,10 +355,10 @@ function ViewsCard({
       if (typeof landmarkLat !== "number" || typeof landmarkLng !== "number") {
         throw new Error("Enter the landmark's latitude and longitude.");
       }
-      const obstacles: Box[] = [...projectBoxes(volumes)];
-      for (const cn of customNeighbors) obstacles.push(...customNeighborBoxes(cn));
-      const osm = await fetchOsmBuildings(latitude, longitude, Math.max(CONTEXT_RADIUS_M, 700));
-      for (const b of osm) obstacles.push(osmBuildingBox(b.polygon, b.defaultHeight));
+      const { obstacles, warning: w } = await collectObstacles(
+        volumes, customNeighbors, latitude, longitude, Math.max(CONTEXT_RADIUS_M, 700)
+      );
+      setWarning(w);
       const lm = latLngToWorld(landmarkLat, landmarkLng, latitude, longitude);
       const panels = sampleFacadePanels(volumes, PANEL_SIZE_M);
       await new Promise((r) => setTimeout(r, 0));
@@ -452,9 +411,10 @@ function ViewsCard({
       </div>
 
       {error && <div className="text-[12px] text-red-700 mb-3">{error}</div>}
+      {warning && !error && <div className="text-[12px] text-amber-800 mb-3">{warning}</div>}
 
       <div className="border border-ink-200">
-        <div className="aspect-[16/9] bg-bone-50">
+        <div className="aspect-[4/3] sm:aspect-[16/9] bg-bone-50">
           {result ? (
             <PhysicsScene volumes={volumes} panelValues={result.panelValues} scheme="view" />
           ) : (
@@ -484,6 +444,33 @@ function ViewsCard({
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Everything that can cast a shadow or block a view: the project itself, the neighbours drawn by
+ * hand and the OpenStreetMap buildings. OSM is a free, rate-limited service — if it is unreachable
+ * the analysis still runs, and the caller shows a warning instead of failing.
+ */
+async function collectObstacles(
+  volumes: Volume[],
+  customNeighbors: CustomNeighbor[],
+  latitude: number,
+  longitude: number,
+  radiusM: number
+): Promise<{ obstacles: Box[]; warning: string | null }> {
+  const obstacles: Box[] = [...projectBoxes(volumes)];
+  for (const cn of customNeighbors) obstacles.push(...customNeighborBoxes(cn));
+  try {
+    const osm = await fetchOsmBuildings(latitude, longitude, radiusM);
+    for (const b of osm) obstacles.push(osmBuildingBox(b.polygon, b.defaultHeight));
+    return { obstacles, warning: null };
+  } catch {
+    return {
+      obstacles,
+      warning:
+        "Surrounding buildings could not be loaded from OpenStreetMap (service busy or offline). The result only includes the project and the neighbours added by hand — run it again later for the full context.",
+    };
+  }
+}
 
 function ColorRamp({
   scheme,

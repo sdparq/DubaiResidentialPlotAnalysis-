@@ -3,21 +3,23 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Project, Typology, ProgramCell, CommonArea, ParkingLevel, OtherUse } from "./types";
 import { PRODUCTION_CITY_SAMPLE, emptyProject, newId } from "./sample";
+import { createIdbStorage } from "./persist-storage";
+import { normalizeProject, parseImport } from "./project-io";
 
-interface State {
+interface PersistedState {
   projects: Record<string, Project>;
   activeProjectId: string;
+}
 
-  /** Returns the currently active project; throws if none — guaranteed by initState */
-  current: () => Project;
-
+interface State extends PersistedState {
   // Multi-project management
   newProject: (name?: string) => string;
   loadSample: () => string;
   duplicateProject: (id: string, newName?: string) => string;
   deleteProject: (id: string) => void;
   switchProject: (id: string) => void;
-  importProject: (p: Partial<Project>) => string;
+  /** Import a single exported project or a full backup. Returns how many projects were added. */
+  importJson: (json: unknown) => number;
 
   // Mutations on the active project
   setProject: (p: Project) => void;
@@ -27,6 +29,8 @@ interface State {
   removeTypology: (id: string) => void;
 
   setProgramCell: (floor: number, typologyId: string, count: number) => void;
+  /** Replace every cell of the given floors with the cells of `fromFloor`. */
+  copyProgramFloor: (fromFloor: number, toFloors: number[]) => void;
 
   upsertCommonArea: (c: CommonArea) => void;
   removeCommonArea: (id: string) => void;
@@ -43,10 +47,13 @@ function freshSample(): Project {
   return { ...PRODUCTION_CITY_SAMPLE, id: newId("sample"), createdAt: now, updatedAt: now };
 }
 
-function initState(): { projects: Record<string, Project>; activeProjectId: string } {
+function initState(): PersistedState {
   const sample = freshSample();
   return { projects: { [sample.id]: sample }, activeProjectId: sample.id };
 }
+
+const mostRecent = (projects: Record<string, Project>) =>
+  Object.values(projects).sort((a, b) => b.updatedAt - a.updatedAt)[0];
 
 /** Helper: update the active project immutably and bump updatedAt */
 function updateActive(state: State, mutate: (p: Project) => Project): Partial<State> {
@@ -62,11 +69,6 @@ export const useStore = create<State>()(
     (set, get) => ({
       ...initState(),
 
-      current: () => {
-        const { projects, activeProjectId } = get();
-        return projects[activeProjectId] ?? freshSample();
-      },
-
       newProject: (name = "Untitled Project") => {
         const p = emptyProject(name);
         set((s) => ({ projects: { ...s.projects, [p.id]: p }, activeProjectId: p.id }));
@@ -75,7 +77,6 @@ export const useStore = create<State>()(
 
       loadSample: () => {
         const p = freshSample();
-        p.name = "Production City — Sample";
         set((s) => ({ projects: { ...s.projects, [p.id]: p }, activeProjectId: p.id }));
         return p.id;
       },
@@ -97,10 +98,7 @@ export const useStore = create<State>()(
             const blank = emptyProject();
             return { projects: { [blank.id]: blank }, activeProjectId: blank.id };
           }
-          let activeId = s.activeProjectId;
-          if (activeId === id) {
-            activeId = Object.values(next).sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
-          }
+          const activeId = s.activeProjectId === id ? mostRecent(next).id : s.activeProjectId;
           return { projects: next, activeProjectId: activeId };
         });
       },
@@ -110,13 +108,15 @@ export const useStore = create<State>()(
         set({ activeProjectId: id });
       },
 
-      importProject: (raw) => {
-        const now = Date.now();
-        const sample = freshSample();
-        // Merge with sample as defaults, then overwrite with imported fields, then assign fresh id
-        const merged: Project = { ...sample, ...raw, id: newId(), createdAt: now, updatedAt: now };
-        set((s) => ({ projects: { ...s.projects, [merged.id]: merged }, activeProjectId: merged.id }));
-        return merged.id;
+      importJson: (json) => {
+        const found = parseImport(json);
+        if (found.length === 0) return 0;
+        set((s) => {
+          const projects = { ...s.projects };
+          for (const p of found) projects[p.id] = p;
+          return { projects, activeProjectId: found[0].id };
+        });
+        return found.length;
       },
 
       setProject: (p) => set((s) => updateActive(s, () => p)),
@@ -147,6 +147,18 @@ export const useStore = create<State>()(
             const next = p.program.filter((c) => !(c.floor === floor && c.typologyId === typologyId));
             if (count > 0) next.push({ floor, typologyId, count });
             return { ...p, program: next };
+          })
+        ),
+
+      copyProgramFloor: (fromFloor, toFloors) =>
+        set((s) =>
+          updateActive(s, (p) => {
+            const targets = new Set(toFloors.filter((f) => f !== fromFloor));
+            const source = p.program.filter((c) => c.floor === fromFloor && c.count > 0);
+            const kept = p.program.filter((c) => !targets.has(c.floor));
+            const copies: ProgramCell[] = [];
+            for (const f of Array.from(targets)) for (const c of source) copies.push({ ...c, floor: f });
+            return { ...p, program: [...kept, ...copies] };
           })
         ),
 
@@ -192,30 +204,51 @@ export const useStore = create<State>()(
     {
       name: "dubai-plot-analysis",
       version: 2,
+      storage: createIdbStorage<PersistedState>(),
       migrate: (persisted: unknown, fromVersion: number) => {
         // v0/v1 shape: { project: Project (without id) }
         if (fromVersion < 2 && persisted && typeof persisted === "object" && "project" in persisted) {
-          const old = (persisted as { project: Partial<Project> }).project;
-          const now = Date.now();
-          const id = newId();
-          const migrated: Project = {
-            ...PRODUCTION_CITY_SAMPLE,
-            ...old,
-            id,
-            createdAt: now,
-            updatedAt: now,
-          };
-          return { projects: { [id]: migrated }, activeProjectId: id };
+          const migrated = normalizeProject((persisted as { project: unknown }).project);
+          if (migrated) return { projects: { [migrated.id]: migrated }, activeProjectId: migrated.id } as unknown as State;
         }
         return persisted as State;
       },
-      // Only persist what we need (cast: the rest are functions, not data)
-      partialize: (s) => ({ projects: s.projects, activeProjectId: s.activeProjectId } as unknown as State),
+      // Validate what comes back from storage and make sure the active id points at a real project.
+      merge: (persisted, current) => {
+        const p = persisted as Partial<PersistedState> | undefined;
+        if (!p || typeof p.projects !== "object" || p.projects === null) return current;
+        const projects: Record<string, Project> = {};
+        for (const raw of Object.values(p.projects)) {
+          const proj = normalizeProject(raw, true);
+          if (proj) projects[proj.id] = proj;
+        }
+        if (Object.keys(projects).length === 0) return current;
+        const activeProjectId =
+          p.activeProjectId && projects[p.activeProjectId] ? p.activeProjectId : mostRecent(projects).id;
+        return { ...current, projects, activeProjectId };
+      },
+      // Only persist data, not the action functions.
+      partialize: (s) => ({ projects: s.projects, activeProjectId: s.activeProjectId }),
     }
   )
 );
 
 /** Convenience hook used by all tabs — guaranteed-non-null current project */
 export function useProject(): Project {
-  return useStore((s) => s.projects[s.activeProjectId]) ?? freshSample();
+  const project = useStore((s) => s.projects[s.activeProjectId]);
+  return project ?? FALLBACK_PROJECT;
+}
+
+// Stable fallback so a (theoretically) missing active project never creates a new object per render.
+const FALLBACK_PROJECT: Project = { ...PRODUCTION_CITY_SAMPLE, id: "fallback" };
+
+/** Resolves once the persisted projects have been loaded (immediately if already done). */
+export function whenHydrated(): Promise<void> {
+  if (useStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsub = useStore.persist.onFinishHydration(() => {
+      unsub();
+      resolve();
+    });
+  });
 }

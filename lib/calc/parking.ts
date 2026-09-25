@@ -68,19 +68,22 @@ export function computeParking(project: Project): ParkingResult {
   }));
 
   const totalUnitsCounted = requiredByTypology.reduce((s, r) => s + r.units, 0);
-  const requiredTotal = requiredByTypology.reduce((s, r) => s + r.required, 0);
+  // Fractional ratios (e.g. 1.5 per 3BR) can give a fractional sum — round the total up.
+  const requiredTotal = Math.ceil(requiredByTypology.reduce((s, r) => s + r.required, 0) - 1e-9);
 
+  // Parking spaces are whole numbers: each other use is rounded up on its own.
   const otherUsesRequired = project.otherUses.map((u) => ({
     name: u.name,
     netArea: u.netArea,
     ratio: u.spacesPer100sqm,
-    required: (u.netArea * u.spacesPer100sqm) / 100,
+    required: Math.ceil(Math.max(0, (u.netArea * u.spacesPer100sqm) / 100) - 1e-9),
   }));
   const otherUsesTotal = otherUsesRequired.reduce((s, r) => s + r.required, 0);
 
   const grandRequired = requiredTotal + otherUsesTotal;
 
-  const requiredPRM = Math.ceil(grandRequired * (project.prmPercent || DUBAI_STANDARDS.parking.prmPercent));
+  // `??` so an explicit 0 % is respected instead of silently falling back to the default.
+  const requiredPRM = Math.ceil(grandRequired * (project.prmPercent ?? DUBAI_STANDARDS.parking.prmPercent));
 
   return {
     availableStandard,

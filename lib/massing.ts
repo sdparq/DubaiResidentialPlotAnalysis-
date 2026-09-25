@@ -128,12 +128,24 @@ export function buildMassing(i: MassingInputs): MassingResult {
   }
 
   if (i.shape === "twinTowers") {
-    const eachArea = Math.min(buildableArea * clamp01(i.twinCoverage), buildableArea / 2.2);
-    if (eachArea < 1) return empty;
-    const each = scalePolygonToArea(i.buildable, eachArea);
-    const sep = Math.max(0, i.twinSeparation);
-    const t1 = clipToBuildable(translatePolygon(each, sep / 2, 0), i.buildable);
-    const t2 = clipToBuildable(translatePolygon(each, -sep / 2, 0), i.buildable);
+    // Split the buildable area into two halves along X with a clear gap between them, then scale
+    // each tower inside its own half — the towers can never overlap and keep at least the gap apart.
+    const bb = polygonBBox(i.buildable);
+    const gap = Math.max(0, Math.min(i.twinSeparation, bb.w * 0.8));
+    const half = (x0: number, x1: number) =>
+      polygonIntersection(i.buildable, [
+        { x: x0, y: bb.minY - 1 },
+        { x: x1, y: bb.minY - 1 },
+        { x: x1, y: bb.maxY + 1 },
+        { x: x0, y: bb.maxY + 1 },
+      ]);
+    const halves = [half(bb.minX - 1, bb.cx - gap / 2), half(bb.cx + gap / 2, bb.maxX + 1)];
+    const target = buildableArea * clamp01(i.twinCoverage);
+    const [t1, t2] = halves.map((h) => {
+      const a = polygonArea(h);
+      if (h.length < 3 || a < 1 || target < 1) return [];
+      return clipToBuildable(scalePolygonToArea(h, Math.min(target, a)), h);
+    });
     const volumes: Volume[] = [];
     if (t1.length >= 3) volumes.push({ polygon: t1, fromY: 0, toY: totalH });
     if (t2.length >= 3) volumes.push({ polygon: t2, fromY: 0, toY: totalH });
