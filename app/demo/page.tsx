@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_SAMPLE } from "@/lib/sample";
 import { computeProgram } from "@/lib/calc/program";
 import { computeParking } from "@/lib/calc/parking";
-import { computeLifts } from "@/lib/calc/lifts";
 import { computeTowerYield } from "@/lib/calc/tower-yield";
 import { residentialSubPct } from "@/lib/calc/gfa";
 import { projectMetrics, type ProjectMetrics } from "@/lib/metrics";
@@ -14,7 +13,7 @@ import { BRAND } from "@/lib/brand";
 import { offsetPolygon, rectanglePlotPolygon, type Point } from "@/lib/geom";
 import type { Volume } from "@/lib/massing";
 import type { Project } from "@/lib/types";
-import type { FacadeParams } from "@/components/massing-scene";
+import { resolveFacade } from "@/lib/facade";
 import { dubaiSun, formatClock } from "@/lib/sun";
 import { BrandMark } from "@/components/shell/brand-mark";
 
@@ -31,7 +30,6 @@ type SceneData = {
   project: Project;
   program: ReturnType<typeof computeProgram>;
   parking: ReturnType<typeof computeParking>;
-  lifts: ReturnType<typeof computeLifts>;
   tower: ReturnType<typeof computeTowerYield>;
   metrics: ProjectMetrics;
 };
@@ -64,7 +62,13 @@ function demoModel(p: Project) {
   };
   const volumes: Volume[] = [];
   if (tiers.basement.count > 0) {
-    volumes.push({ polygon: plot, fromY: -tiers.basement.count * tiers.basement.heightM, toY: 0, kind: "basement" });
+    volumes.push({
+      polygon: plot,
+      fromY: -tiers.basement.count * tiers.basement.heightM,
+      toY: 0,
+      kind: "basement",
+      floors: tiers.basement.count,
+    });
   }
   let y = 0;
   for (const [kind, setback] of [
@@ -74,25 +78,10 @@ function demoModel(p: Project) {
   ] as const) {
     const h = tiers[kind].count * tiers[kind].heightM;
     if (h <= 0) continue;
-    volumes.push({ polygon: inset(setback), fromY: y, toY: y + h, kind });
+    volumes.push({ polygon: inset(setback), fromY: y, toY: y + h, kind, floors: tiers[kind].count });
     y += h;
   }
-  const f = p.facade ?? {};
-  const facade: FacadeParams = {
-    mode: f.mode ?? "massing",
-    panelWidthM: f.panelWidthM ?? 3.2,
-    balconyDepthM: f.balconyDepthM ?? 1.8,
-    balconyEveryNBays: f.balconyEveryNBays ?? 2,
-    solidPanelRatio: f.solidPanelRatio ?? 0.25,
-    balconyLayout: f.balconyLayout ?? "rhythm",
-    patternSeed: f.patternSeed ?? 1,
-    groundPodiumTreatment: f.groundPodiumTreatment ?? "massing",
-    finSpacingM: f.finSpacingM ?? 1,
-    finWidthM: f.finWidthM ?? 0.15,
-    finDepthM: f.finDepthM ?? 0.35,
-    podiumPool: f.podiumPool ?? false,
-    podiumLoungeBbq: f.podiumLoungeBbq ?? false,
-  };
+  const facade = resolveFacade(p.facade);
   return { plot, tower: inset(p.towerSetbackM ?? 0), volumes, facade, floorHeight: tiers.tower.heightM };
 }
 
@@ -403,17 +392,18 @@ function ServicesScene({ t, data }: { t: number; data: SceneData }) {
   return (
     <Stage>
       <div className="w-full max-w-[900px] grid gap-6">
-        <StepTag n="06–07" label="Parking & lifts" />
+        <StepTag n="06" label="Parking" />
         <div className="grid grid-cols-3 gap-4">
           <Tile label="Spaces required" value={n0(m.parkingRequired)} sub={`${n0(pk.grandRequired)} standard + ${n0(pk.requiredPOD)} POD`} t={t} delay={0.05} />
           <Tile label="Planned capacity" value={n0(m.parkingProvided)} sub={`${m.basements} basements + ${m.podium} podium levels`} t={t} delay={0.2} />
-          <Tile label="Passenger lifts" value={m.lifts !== null ? String(m.lifts) : "—"} sub={`Dubai Building Code D.8.8 · ${n0(data.lifts.totalPopulation)} people`} t={t} delay={0.35} />
+          <Tile
+            label={spare >= 0 ? "Spare spaces" : "Shortfall"}
+            value={n0(Math.abs(spare))}
+            sub={spare >= 0 ? "No extra basement needed" : "Add a parking level"}
+            t={t}
+            delay={0.35}
+          />
         </div>
-        {spare >= 0 && (
-          <div className="rounded-xl bg-emerald-50 ring-1 ring-inset ring-emerald-200 px-5 py-3 text-[15px] text-emerald-800" style={{ opacity: reveal(t, 0.55) }}>
-            Parking fits with {n0(spare)} spaces to spare — no extra basement needed.
-          </div>
-        )}
       </div>
     </Stage>
   );
@@ -440,7 +430,7 @@ function MassingSlide({ t, data }: { t: number; data: SceneData }) {
         frameKey="demo"
       />
       <div className="absolute top-6 left-6 rounded-xl bg-white/85 backdrop-blur-md ring-1 ring-black/10 px-4 py-3">
-        <StepTag n="08" label="3D massing" />
+        <StepTag n="07" label="3D massing & façade" />
         <div className="text-[20px] font-semibold text-ink-900 mt-2">
           {data.metrics.heightCode} · {data.metrics.heightM.toFixed(0)} m
         </div>
@@ -463,14 +453,14 @@ function ResultsScene({ t, data }: { t: number; data: SceneData }) {
   return (
     <Stage>
       <div className="w-full max-w-[940px] grid gap-5">
-        <StepTag n="09" label="Areas & report" />
+        <StepTag n="08" label="Areas & ratios" />
         <div className="grid grid-cols-3 gap-4">
           {tiles.map(([l, v, s], i) => (
             <Tile key={l} label={l} value={v} sub={s} t={t} delay={0.05 + i * 0.08} />
           ))}
         </div>
         <p className="text-[15px] text-ink-600" style={{ opacity: reveal(t, 0.65) }}>
-          Every figure recomputes as you edit — and exports as a branded PDF report with the 3D view.
+          Every figure recomputes as you edit — from the plot to the tower façade.
         </p>
       </div>
     </Stage>
@@ -500,9 +490,9 @@ const SCENES: Scene[] = [
   { id: "distribution", durationMs: 6000, caption: "Tower floors derived from the residential GFA.", render: DistributionScene },
   { id: "typologies", durationMs: 6500, caption: "Unit types and the market-class mix for the zone.", render: TypologiesScene },
   { id: "apartments", durationMs: 7000, caption: "Units floor by floor — auto-filled, fully editable.", render: ApartmentsScene },
-  { id: "services", durationMs: 6500, caption: "Parking (incl. POD) and lifts to Dubai Building Code D.8.8.", render: ServicesScene },
-  { id: "massing", durationMs: 11000, caption: "3D massing with a real Dubai sun & shadow study.", render: MassingSlide },
-  { id: "results", durationMs: 6500, caption: "Areas, efficiency ratios and a one-click PDF report.", render: ResultsScene },
+  { id: "services", durationMs: 6500, caption: "Parking to the Dubai Building Code, incl. People of Determination.", render: ServicesScene },
+  { id: "massing", durationMs: 11000, caption: "A designed Dubai tower façade and a real sun & shadow study.", render: MassingSlide },
+  { id: "results", durationMs: 6500, caption: "Areas and efficiency ratios, live as you edit.", render: ResultsScene },
   { id: "outro", durationMs: 5000, caption: "Open the sample and explore it yourself.", render: () => null },
 ];
 const TOTAL_MS = SCENES.reduce((s, sc) => s + sc.durationMs, 0);
@@ -528,7 +518,6 @@ export default function DemoPage() {
       project,
       program: computeProgram(project),
       parking: computeParking(project),
-      lifts: computeLifts(project),
       tower: computeTowerYield(project),
       metrics: projectMetrics(project),
     };

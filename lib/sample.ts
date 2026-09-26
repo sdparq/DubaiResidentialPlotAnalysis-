@@ -3,8 +3,8 @@ import type { Project, Typology, ProgramCell } from "./types";
 /**
  * The demo scheme every new browser opens with — a fictional residential tower
  * on a 64 × 50 m plot in Business Bay (market class C), fully worked through
- * every step so each tab, the KPI bar, the 3D massing and the report have
- * something meaningful to show:
+ * every step so each tab, the KPI bar and the 3D massing have something
+ * meaningful to show:
  *
  *   plot 3,200 m² · target GFA 38,400 m² (FAR 12) · 95 % residential + 5 % retail
  *   2B + G + 3P + 35 type floors · tower plate 1,040 m² (12 m setbacks)
@@ -100,16 +100,14 @@ export const DEMO_SAMPLE: Project = {
   towerSetbackM: 12,
   facade: {
     mode: "residential",
-    panelWidthM: 3.2,
-    balconyDepthM: 1.8,
-    balconyEveryNBays: 2,
-    solidPanelRatio: 0.16,
-    balconyLayout: "rhythm",
-    patternSeed: 7,
+    style: "balconies",
+    glass: "azure",
+    accent: "champagne",
+    roundedCorners: true,
+    crown: true,
+    entrance: true,
+    balconyDepthM: 2.2,
     groundPodiumTreatment: "fins",
-    finSpacingM: 1.2,
-    finWidthM: 0.15,
-    finDepthM: 0.4,
     podiumPool: true,
     podiumLoungeBbq: true,
   },

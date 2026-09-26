@@ -262,7 +262,7 @@ export default function TypologiesTab() {
     if (!project.typologiesSeeded) patch({ typologiesSeeded: true });
 
     // Immediately auto-fill the Apartments matrix from the new typology list —
-    // otherwise Program (and everything downstream: Parking, Lifts, Areas
+    // otherwise Program (and everything downstream: Parking, Areas
     // Summary) stays empty until the user separately visits Program and clicks
     // "Apply to N floors" there, which reads as "typologies aren't applying".
     // The replaced typologies' per-typology overrides are orphaned — clear them.
@@ -410,7 +410,7 @@ export default function TypologiesTab() {
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <h2 className="section-title">Typologies</h2>
-            <p className="section-sub">Define each unit type used in the project. Areas in m². Occupancy and parking ratios drive the lift and parking calculations.</p>
+            <p className="section-sub">Define each unit type used in the project. Areas in m². Parking ratios drive the parking calculation.</p>
           </div>
           <button className="btn btn-primary" onClick={addNew}>+ Add typology</button>
         </div>
@@ -418,13 +418,12 @@ export default function TypologiesTab() {
           <div className="text-sm text-ink-500 italic py-10 text-center">No typologies yet — add one to start.</div>
         ) : (
           <div>
-            <table className="tbl w-full table-fixed" style={{ minWidth: 780 }}>
+            <table className="tbl w-full table-fixed" style={{ minWidth: 690 }}>
               <colgroup>
                 <col />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 110 }} />
-                <col style={{ width: 90 }} />
                 <col style={{ width: 100 }} />
                 <col style={{ width: 80 }} />
               </colgroup>
@@ -434,7 +433,6 @@ export default function TypologiesTab() {
                   <th>Category</th>
                   <th className="text-right whitespace-normal leading-tight">Total area (m²)</th>
                   <th className="text-right whitespace-normal leading-tight">Balcony %{detectedClass && ` · class ${(library[detectedClass].balconyPctOfNsa * 100).toFixed(0)}%`}</th>
-                  <th className="text-right">Occupancy</th>
                   <th className="text-right">Parking / unit</th>
                   <th></th>
                 </tr>
@@ -482,9 +480,6 @@ export default function TypologiesTab() {
                       <div className="text-[11px] text-ink-500 text-right mt-0.5 tabular-nums">
                         = {t.balconyArea.toFixed(1)} m²
                       </div>
-                    </td>
-                    <td className="cell-edit">
-                      <NumCell step={0.1} min={0} value={t.occupancy} onCommit={(n) => update(t, { occupancy: Math.max(0, n) })} />
                     </td>
                     <td className="cell-edit">
                       <NumCell step={0.1} min={0} value={t.parkingPerUnit} onCommit={(n) => update(t, { parkingPerUnit: Math.max(0, n) })} />

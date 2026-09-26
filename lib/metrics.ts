@@ -2,7 +2,6 @@ import type { Project } from "./types";
 import { computeAreas } from "./calc/areas";
 import { computeProgram } from "./calc/program";
 import { computeParking } from "./calc/parking";
-import { computeLifts } from "./calc/lifts";
 
 export const M2_TO_SQFT = 10.7639;
 
@@ -10,7 +9,7 @@ export const M2_TO_SQFT = 10.7639;
  * Headline figures of a scheme — the numbers a developer asks for first.
  * Everything is derived from the same calculation modules the tabs use, so
  * the KPI bar, the sidebar statuses and the 3D presentation overlay always
- * agree with the Areas Summary and the report.
+ * agree with the Areas Summary.
  */
 export interface ProjectMetrics {
   plotArea: number;
@@ -48,8 +47,6 @@ export interface ProjectMetrics {
   parkingProvided: number;
   /** Planned parking surface minus the surface the required spaces need (m²). */
   parkingSurfaceBalance: number;
-  lifts: number | null;
-  liftsOutOfChart: boolean;
 }
 
 /** Dubai storey notation: basements, ground, podium levels and type floors. */
@@ -66,7 +63,6 @@ export function projectMetrics(project: Project): ProjectMetrics {
   const areas = computeAreas(project);
   const program = computeProgram(project);
   const parking = computeParking(project);
-  const lifts = computeLifts(project);
 
   const basements = Math.max(0, project.basements?.count ?? 0);
   const ground = Math.max(0, project.ground?.count ?? 1);
@@ -109,8 +105,6 @@ export function projectMetrics(project: Project): ProjectMetrics {
     parkingRequired: Math.ceil(parking.grandRequiredWithPOD),
     parkingProvided: Math.floor(parkingSurface / m2PerSpace + 1e-9),
     parkingSurfaceBalance: parkingSurface - parking.totalParkingSurfaceM2,
-    lifts: units > 0 ? lifts.dbcTotal : null,
-    liftsOutOfChart: units > 0 && lifts.dbcTotal === null,
   };
 }
 

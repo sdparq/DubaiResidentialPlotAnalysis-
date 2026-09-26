@@ -1,6 +1,5 @@
 "use client";
 import {
-  ArrowUpDown,
   Box,
   Building,
   ChartColumn,
@@ -26,7 +25,6 @@ export const STEP_ICONS: Record<StepId, LucideIcon> = {
   typologies: LayoutGrid,
   program: Building,
   parking: SquareParking,
-  lifts: ArrowUpDown,
   massing: Box,
   summary: ChartColumn,
 };

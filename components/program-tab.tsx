@@ -104,7 +104,7 @@ export default function ProgramTab() {
       <div className="card">
         <div className="mb-5">
           <h2 className="section-title">Units per floor</h2>
-          <p className="section-sub">Set the count of each typology on each floor — totals, parking and lifts update live.</p>
+          <p className="section-sub">Set the count of each typology on each floor — totals and parking update live.</p>
         </div>
         <div className="w-full">
           <table className="tbl table-fixed w-full" style={{ minWidth: 90 + project.typologies.length * 64 + 310 }}>

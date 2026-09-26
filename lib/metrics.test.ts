@@ -43,9 +43,8 @@ describe("demo sample", () => {
     expect(Math.abs(a.apartmentsDrift) / a.apartmentsQuota).toBeLessThan(0.005);
   });
 
-  it("provides enough parking and sizes the lifts", () => {
+  it("provides enough parking", () => {
     expect(m.parkingProvided).toBeGreaterThanOrEqual(m.parkingRequired);
-    expect(m.lifts).not.toBeNull();
     expect(m.efficiency).toBeGreaterThan(0.6);
     expect(m.efficiency).toBeLessThan(0.8);
   });
@@ -63,7 +62,6 @@ describe("empty project", () => {
     expect(m.far).toBeNull();
     expect(m.efficiency).toBeNull();
     expect(m.gfaOfTarget).toBeNull();
-    expect(m.lifts).toBeNull();
     const s = stepStatuses(p, m);
     expect(s.plot).toBe("todo");
     expect(s.massing).toBeNull();

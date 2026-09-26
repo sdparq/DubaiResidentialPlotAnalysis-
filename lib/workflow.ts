@@ -8,7 +8,6 @@ export type StepId =
   | "typologies"
   | "program"
   | "parking"
-  | "lifts"
   | "massing"
   | "summary";
 
@@ -83,26 +82,17 @@ export const STEPS: Step[] = [
     group: "Services",
   },
   {
-    id: "lifts",
-    num: "07",
-    label: "Lifts",
-    title: "Vertical transportation",
-    description:
-      "Passenger lifts per Dubai Building Code D.8.8 and the minimum cabin specification per Table D.6.",
-    group: "Services",
-  },
-  {
     id: "massing",
-    num: "08",
+    num: "07",
     label: "3D Massing",
     title: "3D massing",
     description:
-      "Stratified 3D model with setbacks, façade, roof amenities, a Dubai sun & shadow study and presentation views.",
+      "Stratified 3D model of the scheme with a designed tower façade, crown and podium, and a Dubai sun & shadow study.",
     group: "Design",
   },
   {
     id: "summary",
-    num: "09",
+    num: "08",
     label: "Areas & ratios",
     title: "Areas & efficiency",
     description:
@@ -118,7 +108,7 @@ export type StepStatus = "done" | "attention" | "todo" | null;
 /**
  * Light-touch completion cues for the navigation — "has this step been given
  * what it needs?", not a validation. `attention` flags a result the developer
- * should look at (parking shortfall, lifts outside the DBC chart).
+ * should look at (a parking shortfall).
  */
 export function stepStatuses(project: Project, m: ProjectMetrics): Record<StepId, StepStatus> {
   const parkingStatus: StepStatus =
@@ -130,7 +120,6 @@ export function stepStatuses(project: Project, m: ProjectMetrics): Record<StepId
     typologies: project.typologies.length > 0 ? "done" : "todo",
     program: m.units > 0 ? "done" : "todo",
     parking: parkingStatus,
-    lifts: m.units <= 0 ? "todo" : m.liftsOutOfChart ? "attention" : "done",
     massing: null,
     summary: null,
   };

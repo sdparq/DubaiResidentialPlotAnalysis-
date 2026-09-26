@@ -11,20 +11,19 @@ import {
   OrbitControls,
   Sky,
 } from "@react-three/drei";
-import { EffectComposer, N8AO } from "@react-three/postprocessing";
-import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Point } from "@/lib/geom";
-import { isCounterClockwise, offsetPolygon, polygonBBox, polygonCentroid } from "@/lib/geom";
+import { offsetPolygon, polygonBBox, polygonCentroid } from "@/lib/geom";
 import type { Volume } from "@/lib/massing";
+import type { FacadeParams } from "@/lib/facade";
 import { planPodiumAmenities, type PlacedAmenity } from "@/lib/podium-amenities";
 import { sunDirectionWorld } from "@/lib/sun";
+import { Instanced, cellRand, polyToShape } from "./scene-kit";
+import { LobbyFacade, PodiumFacade, TowerFacade, crownHeight, type FacadeMaterialKind } from "./tower-facade";
 
-/** "iso" is kept as an alias of "aerial" for older callers. */
-export type ViewPresetKind = "iso" | "aerial" | "street" | "front" | "top";
 /** model = white architectural model · diagram = colour by tier · realistic = Dubai daylight. */
 export type SceneStyle = "model" | "diagram" | "realistic";
 /** Renders a fresh frame and resolves with it as a PNG data-URL; `scale` supersamples the export. */
@@ -33,29 +32,6 @@ export type CaptureFn = (opts?: { scale?: number }) => Promise<string | null>;
 export interface SunInput {
   azimuthDeg: number;
   altitudeDeg: number;
-}
-
-/** Resolved parameters for the modelled residential facade. */
-export interface FacadeParams {
-  mode: "massing" | "residential";
-  panelWidthM: number;
-  balconyDepthM: number;
-  balconyEveryNBays: number;
-  /** Fraction (0–1) of facade cells that get a solid precast panel instead of glazing. */
-  solidPanelRatio: number;
-  /** "rhythm" = balconies stack in columns on every Nth bay; "random" = scattered per cell with 1/N probability. */
-  balconyLayout: "rhythm" | "random";
-  /** Seed for the deterministic random pattern. */
-  patternSeed: number;
-  /** Treatment for the Ground + Podium tiers; "fins" adds a vertical louvre screen in front of the solid volume. */
-  groundPodiumTreatment: "massing" | "fins";
-  finSpacingM: number;
-  finWidthM: number;
-  finDepthM: number;
-  /** Model a swimming pool on the podium roof deck, only if it fits. */
-  podiumPool: boolean;
-  /** Model a lounge + BBQ terrace on the podium roof deck, only if it fits. */
-  podiumLoungeBbq: boolean;
 }
 
 export const SIDEWALK_W = 3; // sidewalk ring width around the plot (m)
@@ -69,20 +45,6 @@ interface TierLook {
   opacity: number;
   roughness: number;
   metalness: number;
-}
-
-export interface FacadeLook {
-  glass: string;
-  glassOpacity: number;
-  glassRoughness: number;
-  glassMetalness: number;
-  slab: string;
-  mullion: string;
-  solidLight: string;
-  solidDark: string;
-  rail: string;
-  railOpacity: number;
-  balcony: string;
 }
 
 export interface AmenityLook {
@@ -108,47 +70,19 @@ interface ScenePalette {
   edgeOpacity: number;
   floorLine: string;
   floorLineOpacity: number;
-  facade: FacadeLook;
-  fins: string;
+  /** Material set of the designed façade. */
+  facadeKind: FacadeMaterialKind;
   amenity: AmenityLook;
   planting: { trunk: string; leaf: string; palmLeaf: string } | null;
   env: number;
-  /** Light-former colours of the reflection environment: sky dome, key, fill, ground bounce. */
-  envColors: { top: string; key: string; fill: string; bottom: string };
+  /** Reflection environment: sky dome (top → horizon → ground) plus key and fill light-formers. */
+  envColors: { top: string; horizon: string; key: string; fill: string; bottom: string };
   sun: { intensity: number; color: string };
   hemi: { sky: string; ground: string; intensity: number };
   contactShadow: number;
-  /** Diagram style ignores the façade / fin treatments and shows plain tier volumes. */
+  /** Diagram style ignores the façade treatments and shows plain tier volumes. */
   plainVolumes: boolean;
 }
-
-const MODEL_FACADE: FacadeLook = {
-  glass: "#b3c3cf",
-  glassOpacity: 0.94,
-  glassRoughness: 0.08,
-  glassMetalness: 0.3,
-  slab: "#f6f5f1",
-  mullion: "#efeeea",
-  solidLight: "#f4f3ef",
-  solidDark: "#dddad3",
-  rail: "#cbd8df",
-  railOpacity: 0.55,
-  balcony: "#f3f2ee",
-};
-
-const REAL_FACADE: FacadeLook = {
-  glass: "#6f8e9c",
-  glassOpacity: 0.93,
-  glassRoughness: 0.06,
-  glassMetalness: 0.55,
-  slab: "#efebe3",
-  mullion: "#d9d6cf",
-  solidLight: "#ece6d9",
-  solidDark: "#b9ad96",
-  rail: "#a8c4cd",
-  railOpacity: 0.45,
-  balcony: "#ebe7df",
-};
 
 const NEUTRAL_SITE = {
   sky: false,
@@ -164,6 +98,8 @@ const NEUTRAL_SITE = {
   plotLine: "#7d8699",
 };
 
+const STUDIO_ENV = { top: "#f4f7fb", horizon: "#ffffff", key: "#fff4e2", fill: "#dfe8f2", bottom: "#d9d4ca" };
+
 export const PALETTES: Record<SceneStyle, ScenePalette> = {
   model: {
     ...NEUTRAL_SITE,
@@ -176,14 +112,13 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     edgeOpacity: 0.7,
     floorLine: "#aeb6c2",
     floorLineOpacity: 0.55,
-    facade: MODEL_FACADE,
-    fins: "#e8e5de",
+    facadeKind: "model",
     amenity: { water: "#9fcfe0", rim: "#ebe9e3", lounger: "#e0dcd3", bbq: "#b8b4ab" },
     planting: { trunk: "#d9d5cc", leaf: "#dce3d8", palmLeaf: "#dce3d8" },
-    env: 0.6,
-    envColors: { top: "#f2f6fb", key: "#fff4e2", fill: "#dfe8f2", bottom: "#d9d2c2" },
+    env: 0.55,
+    envColors: STUDIO_ENV,
     sun: { intensity: 2.3, color: "#fff8ef" },
-    hemi: { sky: "#f4f7fb", ground: "#d8d3c7", intensity: 0.55 },
+    hemi: { sky: "#f4f7fb", ground: "#d8d3c7", intensity: 0.5 },
     contactShadow: 0.32,
     plainVolumes: false,
   },
@@ -199,12 +134,11 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     edgeOpacity: 0.55,
     floorLine: "#ffffff",
     floorLineOpacity: 0.6,
-    facade: MODEL_FACADE,
-    fins: "#e8e5de",
+    facadeKind: "model",
     amenity: { water: "#8fd0e6", rim: "#f1efe9", lounger: "#e4e0d7", bbq: "#b8b4ab" },
     planting: null,
-    env: 0.5,
-    envColors: { top: "#f2f6fb", key: "#fff4e2", fill: "#dfe8f2", bottom: "#d9d2c2" },
+    env: 0.45,
+    envColors: STUDIO_ENV,
     sun: { intensity: 2.0, color: "#ffffff" },
     hemi: { sky: "#f4f7fb", ground: "#d8d3c7", intensity: 0.7 },
     contactShadow: 0.25,
@@ -231,14 +165,13 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     edgeOpacity: 0.35,
     floorLine: "#5d6b73",
     floorLineOpacity: 0.35,
-    facade: REAL_FACADE,
-    fins: "#9a8364",
+    facadeKind: "real",
     amenity: { water: "#3aa6c2", rim: "#e3ddcf", lounger: "#b08d62", bbq: "#3f3d38" },
     planting: { trunk: "#8a7355", leaf: "#4f7a3a", palmLeaf: "#4a7732" },
-    env: 0.9,
-    envColors: { top: "#8fb8e4", key: "#fff1d6", fill: "#c9dcef", bottom: "#cdbd98" },
+    env: 0.85,
+    envColors: { top: "#4a8bd4", horizon: "#dce7ef", key: "#fff1d6", fill: "#c9dcef", bottom: "#3f5873" },
     sun: { intensity: 2.7, color: "#fff0d8" },
-    hemi: { sky: "#dbe7f3", ground: "#cbbd9c", intensity: 0.55 },
+    hemi: { sky: "#dbe7f3", ground: "#cbbd9c", intensity: 0.45 },
     contactShadow: 0.3,
     plainVolumes: false,
   },
@@ -246,15 +179,6 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
 
 /** Default light when the sun study is off: mid-afternoon, from the south-west. */
 const DEFAULT_SUN: SunInput = { azimuthDeg: 215, altitudeDeg: 42 };
-
-/** Deterministic per-cell hash → [0,1). Stable across renders for a given seed. */
-function cellRand(seed: number, i: number, j: number, salt = 0): number {
-  let h = (seed | 0) ^ Math.imul(i + 1, 0x9e3779b1) ^ Math.imul(j + 1, 0x85ebca6b) ^ Math.imul(salt + 1, 0xc2b2ae35);
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
 
 export interface SceneProps {
   plot: Point[];           // Plot polygon in plot-local metres
@@ -272,13 +196,13 @@ export interface SceneProps {
   volumeLabels?: string[];
   /** Show dimension line + tier labels. */
   showAnnotations?: boolean;
-  /** Camera preset request; bump `nonce` to re-trigger the same preset. */
-  viewPreset?: { kind: ViewPresetKind; nonce: number } | null;
+  /** Bump to fly the camera back to the aerial view. */
+  resetView?: number;
   /** Slow turntable rotation. */
   autoRotate?: boolean;
   /** Receives a function that renders a frame and returns it as a PNG data-URL. */
   captureRef?: MutableRefObject<CaptureFn | null>;
-  /** Facade treatment; "residential" models slabs, glazing, mullions and balconies on the tower. */
+  /** Designed façade; "residential" mode models the tower, lobby and podium façades. */
   facade?: FacadeParams;
   /** Reports whether the requested podium amenities actually found room, so the tab can show a hint. */
   onAmenityFit?: (fit: { pool: boolean; lounge: boolean }) => void;
@@ -290,26 +214,21 @@ export interface SceneProps {
   northDeg?: number;
   /** Street trees and palms around the plot. */
   showPlanting?: boolean;
-  /** "high" adds screen-space ambient occlusion and sharper shadows. */
+  /** "high" sharpens the sun shadows (presentation mode). */
   quality?: "standard" | "high";
   /** DOM element rotated every frame so it points to true north on screen. */
   compassRef?: RefObject<HTMLElement>;
   /** Changing this re-frames the camera on the model (e.g. the project id). */
   frameKey?: string;
-  /** Called when the view comes to rest: an orbit gesture ends or a camera flight lands. */
-  onViewSettled?: () => void;
 }
 
 interface CameraGoal {
   pos: THREE.Vector3;
   tgt: THREE.Vector3;
-  fov: number;
-  /** Orbit limit to apply: eye-level views need to look up past the horizon. */
-  maxPolar: number;
 }
 
-const GROUND_POLAR = Math.PI / 2 - 0.02;
-const STREET_POLAR = Math.PI * 0.92;
+/** The camera never dips below the horizon. */
+const MAX_POLAR = Math.PI / 2 - 0.02;
 
 interface FitInfo {
   cx: number;
@@ -353,11 +272,18 @@ function SceneContents(
 ) {
   const {
     plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors, volumeLabels,
-    showAnnotations = true, viewPreset, autoRotate, captureRef, facade, onAmenityFit,
-    palette, high, topY, maxDim, sun, northDeg = 0, showPlanting = true, compassRef, frameKey, onViewSettled,
+    showAnnotations = true, resetView, autoRotate, captureRef, facade, onAmenityFit,
+    palette, high, topY, maxDim, sun, northDeg = 0, showPlanting = true, compassRef, frameKey,
   } = props;
 
   const bbox = useMemo(() => polygonBBox(plot), [plot]);
+  // A designed crown rises above the roof: frame and light the whole silhouette.
+  const tower = volumes.find((v) => v.kind === "tower");
+  const crownTop =
+    tower && !palette.plainVolumes && facade?.mode === "residential" && facade.crown
+      ? tower.toY + crownHeight(floorHeight)
+      : 0;
+  const frameTop = Math.max(topY, crownTop);
   const fit: FitInfo = useMemo(() => {
     const ring = SIDEWALK_W + ROAD_W;
     return {
@@ -369,13 +295,12 @@ function SceneContents(
       maxX: bbox.maxX + ring,
       minZ: -bbox.maxY - ring,
       maxZ: -bbox.minY + ring,
-      topY,
+      topY: frameTop,
     };
-  }, [bbox, topY]);
+  }, [bbox, frameTop]);
 
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const goalRef = useRef<CameraGoal | null>(null);
-  const composerRef = useRef<EffectComposerImpl | null>(null);
 
   const sunInput = sun ?? DEFAULT_SUN;
   const sunUp = sunInput.altitudeDeg > 0.5;
@@ -411,10 +336,9 @@ function SceneContents(
       {/* Light-former environment for soft sky light and reflections — no network fetches. */}
       {/* Keyed by style: a one-frame environment only re-renders when it remounts. */}
       <Environment key={props.style} resolution={256} frames={1} environmentIntensity={palette.env}>
-        <Lightformer intensity={1.1} rotation-x={Math.PI / 2} position={[0, 60, 0]} scale={[200, 200, 1]} color={palette.envColors.top} />
+        <EnvDome top={palette.envColors.top} horizon={palette.envColors.horizon} bottom={palette.envColors.bottom} />
         <Lightformer intensity={2.4} form="rect" position={[80, 40, 60]} scale={[60, 30, 1]} color={palette.envColors.key} target={[0, 0, 0]} />
         <Lightformer intensity={0.7} form="rect" position={[-80, 25, -40]} scale={[90, 30, 1]} color={palette.envColors.fill} target={[0, 0, 0]} />
-        <Lightformer intensity={0.4} rotation-x={-Math.PI / 2} position={[0, -10, 0]} scale={[200, 200, 1]} color={palette.envColors.bottom} />
       </Environment>
 
       <hemisphereLight args={[palette.hemi.sky, palette.hemi.ground, palette.hemi.intensity]} />
@@ -439,16 +363,15 @@ function SceneContents(
       />
 
       <CameraRig
-        preset={viewPreset ?? null}
+        resetView={resetView}
         goalRef={goalRef}
         controlsRef={controlsRef}
         fit={fit}
         frameKey={frameKey}
         northDeg={northDeg}
         compassRef={compassRef}
-        onSettled={onViewSettled}
       />
-      {captureRef && <CaptureBridge captureRef={captureRef} composerRef={composerRef} />}
+      {captureRef && <CaptureBridge captureRef={captureRef} />}
 
       <OrbitControls
         ref={controlsRef}
@@ -461,16 +384,11 @@ function SceneContents(
         autoRotate={!!autoRotate}
         autoRotateSpeed={0.6}
         onStart={() => { goalRef.current = null; }}
-        onEnd={() => onViewSettled?.()}
+        maxPolarAngle={MAX_POLAR}
         minDistance={4}
         maxDistance={maxDim * 8}
       />
 
-      {high && (
-        <EffectComposer ref={composerRef} multisampling={4}>
-          <N8AO aoRadius={Math.max(2, Math.min(8, maxDim * 0.03))} intensity={2.2} distanceFalloff={1} quality="medium" halfRes />
-        </EffectComposer>
-      )}
     </>
   );
 }
@@ -499,8 +417,9 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
   plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors, volumeLabels,
   showAnnotations, facade, onAmenityFit, palette, topY, maxDim, showPlanting, fit,
 }: SiteProps) {
-  const facadeActive = !palette.plainVolumes && facade?.mode === "residential";
-  const finsActive = !palette.plainVolumes && facade?.groundPodiumTreatment === "fins";
+  const designed = !palette.plainVolumes && facade?.mode === "residential" ? facade : null;
+  const isDesigned = (v: Volume) =>
+    !!designed && !v.hole && (v.kind === "tower" || v.kind === "podium" || (v.kind === "ground" && designed.entrance));
 
   // The amenity deck is whichever tier sits directly below the tower: podium
   // when there is one, otherwise the ground floor (tower rises straight off it).
@@ -569,25 +488,39 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
 
   const floorRings = useMemo(() => {
     if (floorHeight <= 0 || volumes.length === 0) return [];
-    const out: { y: number; polygon: Point[]; hole?: Point[]; emphasis: boolean; kind?: Volume["kind"] }[] = [];
+    const out: { y: number; polygon: Point[]; hole?: Point[]; emphasis: boolean; designed: boolean }[] = [];
     for (const v of volumes) {
       if (v.kind === "basement") continue;
-      // Floor levels inside this volume, excluding top and bottom (those are mesh edges)
-      const startFloor = Math.floor(v.fromY / floorHeight) + 1;
-      const endFloor = Math.ceil(v.toY / floorHeight) - 1;
-      for (let f = startFloor; f <= endFloor; f++) {
-        const y = f * floorHeight;
-        if (y <= v.fromY + 1e-3 || y >= v.toY - 1e-3) continue;
-        out.push({ y, polygon: v.polygon, hole: v.hole, emphasis: f % 5 === 0, kind: v.kind });
+      const h = v.toY - v.fromY;
+      const n = v.floors && v.floors > 0 ? v.floors : Math.round(h / floorHeight);
+      if (n <= 1) continue;
+      const fh = h / n;
+      const designedVolume = isDesigned(v);
+      for (let f = 1; f < n; f++) {
+        out.push({ y: v.fromY + f * fh, polygon: v.polygon, hole: v.hole, emphasis: f % 5 === 0, designed: designedVolume });
       }
     }
     return out;
-  }, [volumes, floorHeight]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volumes, floorHeight, designed]);
 
   // Annotation anchors: dimension line on the right of the plot, tier chips on the left.
   const annotPad = Math.max(2.5, Math.max(bbox.w, bbox.h) * 0.08);
   const dimX = bbox.maxX + annotPad;
   const labelX = bbox.minX - annotPad;
+  // Tier chips sit at mid-height of their volume, nudged down where they would
+  // stack on top of each other (thin ground / podium / basement tiers).
+  const labelYs = useMemo(() => {
+    const gap = maxDim * 0.065;
+    const ys = volumes.map((v) => (v.fromY + v.toY) / 2);
+    const order = ys.map((y, i) => ({ y, i })).sort((a, b) => b.y - a.y);
+    let above = Infinity;
+    for (const o of order) {
+      ys[o.i] = Math.min(o.y, above - gap);
+      above = ys[o.i];
+    }
+    return ys;
+  }, [volumes, maxDim]);
   const tierBoundaries = useMemo(() => {
     const ys = new Set<number>([0]);
     volumes.forEach((v) => {
@@ -669,47 +602,68 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
         <Line points={buildableOutline} color="#5a6479" lineWidth={1} transparent opacity={0.5} />
       )}
 
-      {/* Volumes */}
+      {/* Volumes — designed façades, or plain tier volumes (massing mode, Diagram style) */}
       {volumes.map((v, i) => {
         const shape = volumeShapes[i];
         const depth = v.toY - v.fromY;
         if (!shape || depth <= 0) return null;
-        if (facadeActive && facade && v.kind === "tower") {
+        if (designed && isDesigned(v)) {
+          if (v.kind === "tower") {
+            return (
+              <TowerFacade
+                key={i}
+                polygon={v.polygon}
+                fromY={v.fromY}
+                toY={v.toY}
+                floorHeight={floorHeight}
+                floors={v.floors}
+                params={designed}
+                kind={palette.facadeKind}
+              />
+            );
+          }
+          if (v.kind === "podium") {
+            return (
+              <PodiumFacade
+                key={i}
+                polygon={v.polygon}
+                fromY={v.fromY}
+                toY={v.toY}
+                floors={v.floors}
+                params={designed}
+                kind={palette.facadeKind}
+              />
+            );
+          }
           return (
-            <ResidentialFacade
-              key={`fac-${i}`}
+            <LobbyFacade
+              key={i}
               polygon={v.polygon}
-              hole={v.hole}
               fromY={v.fromY}
               toY={v.toY}
-              floorHeight={floorHeight}
-              params={facade}
-              look={palette.facade}
+              floors={v.floors}
+              plot={plot}
+              params={designed}
+              kind={palette.facadeKind}
             />
           );
         }
         const look = palette.tiers[v.kind ?? "tower"];
-        const showFins = finsActive && facade && (v.kind === "ground" || v.kind === "podium");
         return (
-          <group key={i}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, v.fromY, 0]} castShadow receiveShadow>
-              <extrudeGeometry args={[shape, { depth, bevelEnabled: false }]} />
-              <meshPhysicalMaterial
-                color={look.fill}
-                roughness={look.roughness}
-                metalness={look.metalness}
-                clearcoat={v.kind === "tower" && !palette.plainVolumes ? 0.3 : 0}
-                clearcoatRoughness={0.6}
-                transparent={look.opacity < 1}
-                opacity={look.opacity}
-                depthWrite={look.opacity >= 1}
-              />
-              <Edges color={look.edge} threshold={15} transparent opacity={palette.edgeOpacity} />
-            </mesh>
-            {showFins && (
-              <VerticalFinScreen polygon={v.polygon} fromY={v.fromY} toY={v.toY} params={facade!} color={palette.fins} />
-            )}
-          </group>
+          <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, v.fromY, 0]} castShadow receiveShadow>
+            <extrudeGeometry args={[shape, { depth, bevelEnabled: false }]} />
+            <meshPhysicalMaterial
+              color={look.fill}
+              roughness={look.roughness}
+              metalness={look.metalness}
+              clearcoat={v.kind === "tower" && !palette.plainVolumes ? 0.3 : 0}
+              clearcoatRoughness={0.6}
+              transparent={look.opacity < 1}
+              opacity={look.opacity}
+              depthWrite={look.opacity >= 1}
+            />
+            <Edges color={look.edge} threshold={15} transparent opacity={palette.edgeOpacity} />
+          </mesh>
         );
       })}
 
@@ -720,10 +674,10 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
         <PodiumAmenities pool={amenityPlan.pool} lounge={amenityPlan.lounge} toY={deckVolume.toY} look={palette.amenity} />
       )}
 
-      {/* Floor-level rings around each volume — emphasised every 5 floors.
-          The modelled facade draws real slabs on the tower, so its rings are skipped. */}
+      {/* Floor-level rings around each plain volume — emphasised every 5 floors.
+          Designed façades draw their own slabs and bands. */}
       {floorRings
-        .filter((r) => !(facadeActive && r.kind === "tower"))
+        .filter((r) => !r.designed)
         .map((r, i) => (
           <FloorRing
             key={`fr-${i}`}
@@ -748,11 +702,10 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
         volumes.map((v, i) => {
           const label = volumeLabels[i];
           if (!label) return null;
-          const midY = (v.fromY + v.toY) / 2;
           return (
             <Html
               key={`vl-${i}`}
-              position={[labelX, midY, -centroid.y]}
+              position={[labelX, labelYs[i], -centroid.y]}
               center
               zIndexRange={[10, 0]}
               style={{ pointerEvents: "none" }}
@@ -769,6 +722,38 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
     </>
   );
 });
+
+/**
+ * Sky dome of the reflection environment — sky above, a bright horizon and
+ * warm ground below — so glass reflects a believable sky instead of black.
+ */
+function EnvDome({ top, horizon, bottom }: { top: string; horizon: string; bottom: string }) {
+  const geometry = useMemo(() => {
+    const g = new THREE.SphereGeometry(400, 48, 24);
+    const pos = g.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const cTop = new THREE.Color(top);
+    const cHorizon = new THREE.Color(horizon);
+    const cBottom = new THREE.Color(bottom);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i) / 400;
+      if (y >= 0) c.copy(cHorizon).lerp(cTop, Math.pow(y, 0.55));
+      else c.copy(cHorizon).lerp(cBottom, Math.min(1, -y * 4));
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return g;
+  }, [top, horizon, bottom]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return (
+    <mesh geometry={geometry}>
+      <meshBasicMaterial vertexColors side={THREE.BackSide} toneMapped={false} fog={false} />
+    </mesh>
+  );
+}
 
 /** Screen-space vertical gradient behind everything (captured with the frame). */
 function GradientBackground({ top, bottom }: { top: string; bottom: string }) {
@@ -897,54 +882,15 @@ function fitDistance(radius: number, fovDeg: number, aspect: number) {
   return radius / Math.sin(Math.min(v, h) / 2);
 }
 
-function presetGoal(kind: ViewPresetKind, f: FitInfo, aspect: number): CameraGoal {
+/** The aerial view: from the south-east, lower for towers so the façade reads. */
+function aerialGoal(f: FitInfo, aspect: number): CameraGoal {
   const radius = 0.5 * Math.sqrt(f.w * f.w + f.d * f.d + f.topY * f.topY) + 4;
   const tall = f.topY > Math.max(f.w, f.d);
-  if (kind === "top") {
-    const siteR = 0.5 * Math.hypot(f.maxX - f.minX, f.maxZ - f.minZ);
-    const dist = fitDistance(siteR, 30, aspect) * 0.95 + f.topY;
-    return {
-      pos: new THREE.Vector3(f.cx, dist, f.cz + dist * 0.01),
-      tgt: new THREE.Vector3(f.cx, 0, f.cz),
-      fov: 30,
-      maxPolar: GROUND_POLAR,
-    };
-  }
-  if (kind === "front") {
-    const fov = 30;
-    const tgt = new THREE.Vector3(f.cx, f.topY * 0.48, f.cz);
-    const dist = fitDistance(radius, fov, aspect) * 1.18;
-    const el = (6 * Math.PI) / 180;
-    return { pos: new THREE.Vector3(f.cx, tgt.y + Math.sin(el) * dist, f.cz + Math.cos(el) * dist), tgt, fov, maxPolar: GROUND_POLAR };
-  }
-  if (kind === "street") {
-    const fov = 58;
-    // Across the road from the front-left corner, at eye height, looking up.
-    const standoff = SIDEWALK_W + ROAD_W + 5;
-    let px = f.cx - f.w * 0.55 - standoff * 0.6;
-    let pz = f.cz + f.d / 2 + standoff;
-    const minD = f.topY * 0.72 + Math.hypot(f.w, f.d) * 0.35;
-    const dx = px - f.cx;
-    const dz = pz - f.cz;
-    const d = Math.hypot(dx, dz);
-    if (d < minD) {
-      px = f.cx + (dx / d) * minD;
-      pz = f.cz + (dz / d) * minD;
-    }
-    return {
-      pos: new THREE.Vector3(px, 1.7, pz),
-      tgt: new THREE.Vector3(f.cx, Math.max(4, f.topY * 0.52), f.cz),
-      fov,
-      maxPolar: STREET_POLAR,
-    };
-  }
-  // aerial / iso — from the south-east, lower for towers so the façade reads.
-  const fov = 32;
   const az = (38 * Math.PI) / 180;
   const el = ((tall ? 22 : 32) * Math.PI) / 180;
   // Headroom for the viewer's floating toolbars at the top and bottom.
-  const tgt = new THREE.Vector3(f.cx, f.topY * 0.42, f.cz);
-  const dist = fitDistance(radius, fov, aspect) * 1.22;
+  const tgt = new THREE.Vector3(f.cx, f.topY * 0.44, f.cz);
+  const dist = fitDistance(radius, 32, aspect) * 1.22;
   return {
     pos: new THREE.Vector3(
       tgt.x + Math.cos(el) * Math.sin(az) * dist,
@@ -952,23 +898,20 @@ function presetGoal(kind: ViewPresetKind, f: FitInfo, aspect: number): CameraGoa
       tgt.z + Math.cos(el) * Math.cos(az) * dist,
     ),
     tgt,
-    fov,
-    maxPolar: GROUND_POLAR,
   };
 }
 
-/** Frames the model, flies to requested presets and keeps the compass pointing north. */
+/** Frames the model, flies back to the aerial view on request and keeps the compass pointing north. */
 function CameraRig({
-  preset, goalRef, controlsRef, fit, frameKey, northDeg, compassRef, onSettled,
+  resetView, goalRef, controlsRef, fit, frameKey, northDeg, compassRef,
 }: {
-  preset: { kind: ViewPresetKind; nonce: number } | null;
+  resetView?: number;
   goalRef: MutableRefObject<CameraGoal | null>;
   controlsRef: MutableRefObject<OrbitControlsImpl | null>;
   fit: FitInfo;
   frameKey?: string;
   northDeg: number;
   compassRef?: RefObject<HTMLElement>;
-  onSettled?: () => void;
 }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
   const size = useThree((s) => s.size);
@@ -982,28 +925,21 @@ function CameraRig({
     const controls = controlsRef.current;
     if (framed.current === key || !controls || size.width === 0) return;
     framed.current = key;
-    const g = presetGoal("aerial", fit, aspect);
+    const g = aerialGoal(fit, aspect);
     camera.position.copy(g.pos);
-    camera.fov = g.fov;
+    camera.fov = 32;
     camera.updateProjectionMatrix();
-    controls.maxPolarAngle = g.maxPolar;
     controls.target.copy(g.tgt);
     controls.update();
     goalRef.current = null;
-    onSettled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameKey, size.width > 0, controlsRef.current]);
 
   useEffect(() => {
-    if (!preset) return;
-    const g = presetGoal(preset.kind, fit, aspect);
-    // Relaxing the orbit limit is safe right away; tightening it waits until
-    // the flight lands, or the controls would yank the camera mid-air.
-    const controls = controlsRef.current;
-    if (controls && g.maxPolar > controls.maxPolarAngle) controls.maxPolarAngle = g.maxPolar;
-    goalRef.current = g;
+    if (!resetView) return;
+    goalRef.current = aerialGoal(fit, aspect);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset?.nonce, preset?.kind]);
+  }, [resetView]);
 
   useFrame((_, delta) => {
     const controls = controlsRef.current;
@@ -1013,16 +949,10 @@ function CameraRig({
       const k = 1 - Math.exp(-5 * Math.min(delta, 0.1));
       camera.position.lerp(g.pos, k);
       controls.target.lerp(g.tgt, k);
-      camera.fov += (g.fov - camera.fov) * k;
-      camera.updateProjectionMatrix();
-      if (camera.position.distanceTo(g.pos) < 0.05 && Math.abs(camera.fov - g.fov) < 0.05) {
+      if (camera.position.distanceTo(g.pos) < 0.05) {
         camera.position.copy(g.pos);
         controls.target.copy(g.tgt);
-        camera.fov = g.fov;
-        camera.updateProjectionMatrix();
-        controls.maxPolarAngle = g.maxPolar;
         goalRef.current = null;
-        onSettled?.();
       }
       controls.update();
     }
@@ -1045,12 +975,7 @@ function CameraRig({
  * synchronously in a single task, so no React re-render or R3F frame can slip
  * in between (R3F re-applies the Canvas dpr prop whenever the Canvas renders).
  */
-function CaptureBridge({
-  captureRef, composerRef,
-}: {
-  captureRef: MutableRefObject<CaptureFn | null>;
-  composerRef: MutableRefObject<EffectComposerImpl | null>;
-}) {
+function CaptureBridge({ captureRef }: { captureRef: MutableRefObject<CaptureFn | null> }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
@@ -1066,32 +991,24 @@ function CaptureBridge({
       const maxTex = gl.capabilities.maxTextureSize || 4096;
       gl.getSize(size);
       const target = Math.max(base, Math.min(base * scale, maxTex / Math.max(1, size.x), maxTex / Math.max(1, size.y)));
-      const composer = composerRef.current;
       const annotations = scene.getObjectByName("annotations");
       const annotationsVisible = annotations?.visible ?? false;
       if (annotations) annotations.visible = false;
       try {
-        if (target !== base) {
-          gl.setPixelRatio(target);
-          composer?.setSize(size.x, size.y);
-        }
-        if (composer) composer.render();
-        else gl.render(scene, camera);
+        if (target !== base) gl.setPixelRatio(target);
+        gl.render(scene, camera);
         return canvas.toDataURL("image/png");
       } catch {
         return null;
       } finally {
         if (annotations) annotations.visible = annotationsVisible;
-        if (target !== base) {
-          gl.setPixelRatio(base);
-          composer?.setSize(size.x, size.y);
-        }
+        if (target !== base) gl.setPixelRatio(base);
       }
     };
     return () => {
       captureRef.current = null;
     };
-  }, [gl, scene, camera, captureRef, composerRef]);
+  }, [gl, scene, camera, captureRef]);
   return null;
 }
 
@@ -1192,15 +1109,6 @@ export function GroundRing({
   );
 }
 
-export function polyToShape(points: Point[]): THREE.Shape | null {
-  if (points.length < 3) return null;
-  const s = new THREE.Shape();
-  s.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) s.lineTo(points[i].x, points[i].y);
-  s.closePath();
-  return s;
-}
-
 function closedPoints(points: Point[], elev: number): [number, number, number][] {
   if (points.length === 0) return [];
   const result: [number, number, number][] = points.map((p) => [p.x, elev, -p.y]);
@@ -1290,339 +1198,12 @@ function SitePlanting({ ring, look }: { ring: Point[]; look: { trunk: string; le
   }, [ring]);
   return (
     <>
-      <InstancedGeometry geometry={geo.trunk} matrices={palms} color={look.trunk} roughness={0.95} />
-      <InstancedGeometry geometry={geo.crown} matrices={palms} color={look.palmLeaf} roughness={0.85} flat doubleSide />
-      <InstancedGeometry geometry={geo.treeTrunk} matrices={trees} color={look.trunk} roughness={0.95} />
-      <InstancedGeometry geometry={geo.canopy} matrices={trees} color={look.leaf} roughness={0.9} flat />
+      <Instanced geometry={geo.trunk} matrices={palms} color={look.trunk} roughness={0.95} />
+      <Instanced geometry={geo.crown} matrices={palms} color={look.palmLeaf} roughness={0.85} flat doubleSide />
+      <Instanced geometry={geo.treeTrunk} matrices={trees} color={look.trunk} roughness={0.95} />
+      <Instanced geometry={geo.canopy} matrices={trees} color={look.leaf} roughness={0.9} flat />
     </>
   );
-}
-
-function InstancedGeometry({
-  geometry, matrices, color, roughness = 0.9, flat = false, doubleSide = false,
-}: {
-  geometry: THREE.BufferGeometry;
-  matrices: THREE.Matrix4[];
-  color: string;
-  roughness?: number;
-  flat?: boolean;
-  doubleSide?: boolean;
-}) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  useLayoutEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
-    mesh.count = matrices.length;
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [matrices]);
-  if (matrices.length === 0) return null;
-  return (
-    <instancedMesh key={matrices.length} ref={ref} args={[geometry, undefined, matrices.length]} castShadow receiveShadow>
-      <meshStandardMaterial
-        color={color}
-        roughness={roughness}
-        flatShading={flat}
-        side={doubleSide ? THREE.DoubleSide : THREE.FrontSide}
-      />
-    </instancedMesh>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*                        Parametric residential facade                       */
-/* -------------------------------------------------------------------------- */
-
-const SLAB_T = 0.22;          // floor slab thickness (m)
-const SLAB_LIP = 0.12;        // slab projection beyond the facade line (m)
-const GLASS_INSET = 0.16;     // curtain-wall setback behind the facade line (m)
-const MULLION_W = 0.12;       // vertical mullion section (m)
-const RAIL_H = 1.05;          // balustrade height (m)
-
-/**
- * Models a residential tower facade from the massing polygon: floor slabs,
- * a recessed glazing body, vertical mullions on a parametric bay rhythm and
- * balconies on every Nth bay. All repeated elements are instanced.
- */
-export function ResidentialFacade({
-  polygon, hole, fromY, toY, floorHeight, params, look = REAL_FACADE,
-}: {
-  polygon: Point[];
-  hole?: Point[];
-  fromY: number;
-  toY: number;
-  floorHeight: number;
-  params: FacadeParams;
-  look?: FacadeLook;
-}) {
-  const { panelWidthM, balconyDepthM, balconyEveryNBays, solidPanelRatio, balconyLayout, patternSeed } = params;
-  const height = toY - fromY;
-  const floors = Math.max(1, Math.round(height / Math.max(0.1, floorHeight)));
-  const floorH = height / floors;
-
-  const glassShape = useMemo(() => {
-    const inset = offsetPolygon(polygon, polygon.map(() => GLASS_INSET));
-    const s = polyToShape(inset.length >= 3 ? inset : polygon);
-    if (s && hole && hole.length >= 3) {
-      const grown = offsetPolygon(hole, hole.map(() => -GLASS_INSET));
-      const src = (grown.length >= 3 ? grown : hole).slice().reverse();
-      const path = new THREE.Path();
-      path.moveTo(src[0].x, src[0].y);
-      for (let i = 1; i < src.length; i++) path.lineTo(src[i].x, src[i].y);
-      path.closePath();
-      s.holes.push(path);
-    }
-    return s;
-  }, [polygon, hole]);
-
-  // One slab geometry, instanced per floor (plus the roof slab).
-  const slabGeometry = useMemo(() => {
-    const grown = offsetPolygon(polygon, polygon.map(() => -SLAB_LIP));
-    const s = polyToShape(grown.length >= 3 ? grown : polygon);
-    if (!s) return null;
-    if (hole && hole.length >= 3) {
-      const shrunk = offsetPolygon(hole, hole.map(() => SLAB_LIP));
-      const src = (shrunk.length >= 3 ? shrunk : hole).slice().reverse();
-      const path = new THREE.Path();
-      path.moveTo(src[0].x, src[0].y);
-      for (let i = 1; i < src.length; i++) path.lineTo(src[i].x, src[i].y);
-      path.closePath();
-      s.holes.push(path);
-    }
-    const g = new THREE.ExtrudeGeometry(s, { depth: SLAB_T, bevelEnabled: false });
-    g.rotateX(-Math.PI / 2);
-    return g;
-  }, [polygon, hole]);
-  useEffect(() => () => slabGeometry?.dispose(), [slabGeometry]);
-
-  const slabMatrices = useMemo(
-    () =>
-      Array.from({ length: floors + 1 }, (_, i) => {
-        const y = i === floors ? toY - SLAB_T : fromY + i * floorH;
-        return new THREE.Matrix4().makeTranslation(0, y, 0);
-      }),
-    [floors, fromY, toY, floorH],
-  );
-
-  const { mullions, balconySlabs, rails, solidsLight, solidsDark } = useMemo(() => {
-    const mullions: THREE.Matrix4[] = [];
-    const balconySlabs: THREE.Matrix4[] = [];
-    const rails: THREE.Matrix4[] = [];
-    const solidsLight: THREE.Matrix4[] = [];
-    const solidsDark: THREE.Matrix4[] = [];
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-    const yAxis = new THREE.Vector3(0, 1, 0);
-
-    const ccw = isCounterClockwise(polygon);
-    const outSign = ccw ? 1 : -1; // outward normal = (uy,-ux) for CCW polygons (local xy)
-    const panelW = Math.max(1, panelWidthM);
-    const everyN = Math.max(1, Math.round(balconyEveryNBays));
-    const solidRatio = Math.min(1, Math.max(0, solidPanelRatio));
-    const seed = Math.floor(patternSeed) || 1;
-    const mullionH = floorH - SLAB_T;
-    const panelH = floorH - SLAB_T;
-    let globalBay = 0;
-
-    for (let e = 0; e < polygon.length; e++) {
-      const a = polygon[e];
-      const b = polygon[(e + 1) % polygon.length];
-      const ex = b.x - a.x;
-      const ey = b.y - a.y;
-      const len = Math.hypot(ex, ey);
-      if (len < 0.8) continue;
-      const ux = ex / len;
-      const uy = ey / len;
-      const nx = uy * outSign;
-      const ny = -ux * outSign;
-      // Yaw that aligns the box's local X with the edge direction in world space.
-      const yaw = Math.atan2(uy, ux);
-      quat.setFromAxisAngle(yAxis, yaw);
-      const bays = Math.max(1, Math.round(len / panelW));
-      const bayLen = len / bays;
-
-      for (let k = 0; k < bays; k++, globalBay++) {
-        // Vertical mullion at the bay start (the next edge contributes its own corner mullion).
-        const px = a.x + ux * bayLen * k + nx * 0.02;
-        const py = a.y + uy * bayLen * k + ny * 0.02;
-        for (let f = 0; f < floors; f++) {
-          const yMid = fromY + f * floorH + SLAB_T + mullionH / 2;
-          pos.set(px, yMid, -py);
-          scale.set(MULLION_W, mullionH, MULLION_W);
-          mullions.push(new THREE.Matrix4().compose(pos, quat, scale));
-        }
-
-        const cx = a.x + ux * bayLen * (k + 0.5);
-        const cy = a.y + uy * bayLen * (k + 0.5);
-        const w = bayLen * 0.9;
-
-        for (let f = 0; f < floors; f++) {
-          // Solid precast panel instead of glazing on a random subset of cells.
-          const isSolid = solidRatio > 0 && cellRand(seed, globalBay, f) < solidRatio;
-          if (isSolid) {
-            const yMid = fromY + f * floorH + SLAB_T + panelH / 2;
-            pos.set(cx, yMid, -cy);
-            scale.set(Math.max(0.3, bayLen - MULLION_W), panelH, 0.16);
-            const m = new THREE.Matrix4().compose(pos, quat, scale);
-            if (cellRand(seed, globalBay, f, 2) < 0.7) solidsLight.push(m);
-            else solidsDark.push(m);
-          }
-
-          // Balconies: never on the tower's base floor line or on solid cells.
-          if (f === 0 || isSolid || balconyDepthM <= 0.05) continue;
-          const hasBalcony =
-            balconyLayout === "random"
-              ? cellRand(seed, globalBay, f, 1) < 1 / everyN
-              : globalBay % everyN === 0;
-          if (!hasBalcony) continue;
-          const yBase = fromY + f * floorH;
-          // slab
-          pos.set(cx + nx * (balconyDepthM / 2), yBase + 0.07, -(cy + ny * (balconyDepthM / 2)));
-          scale.set(w, 0.14, balconyDepthM);
-          balconySlabs.push(new THREE.Matrix4().compose(pos, quat, scale));
-          // glass balustrade on the outer edge
-          pos.set(cx + nx * (balconyDepthM - 0.03), yBase + 0.14 + RAIL_H / 2, -(cy + ny * (balconyDepthM - 0.03)));
-          scale.set(w, RAIL_H, 0.05);
-          rails.push(new THREE.Matrix4().compose(pos, quat, scale));
-        }
-      }
-    }
-    return { mullions, balconySlabs, rails, solidsLight, solidsDark };
-  }, [polygon, fromY, floors, floorH, panelWidthM, balconyDepthM, balconyEveryNBays, solidPanelRatio, balconyLayout, patternSeed]);
-
-  return (
-    <group>
-      {/* Recessed glazing body — stops under the roof slab so the roof reads opaque */}
-      {glassShape && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, fromY, 0]} castShadow receiveShadow>
-          <extrudeGeometry args={[glassShape, { depth: Math.max(0.1, height - SLAB_T), bevelEnabled: false }]} />
-          <meshPhysicalMaterial
-            color={look.glass}
-            roughness={look.glassRoughness}
-            metalness={look.glassMetalness}
-            clearcoat={0.6}
-            clearcoatRoughness={0.2}
-            transparent={look.glassOpacity < 1}
-            opacity={look.glassOpacity}
-          />
-        </mesh>
-      )}
-      {/* Floor slabs (including roof slab) */}
-      {slabGeometry && (
-        <InstancedGeometry geometry={slabGeometry} matrices={slabMatrices} color={look.slab} roughness={0.85} />
-      )}
-      <InstancedBoxes matrices={mullions} color={look.mullion} roughness={0.7} />
-      <InstancedBoxes matrices={solidsLight} color={look.solidLight} roughness={0.85} />
-      <InstancedBoxes matrices={solidsDark} color={look.solidDark} roughness={0.85} />
-      <InstancedBoxes matrices={balconySlabs} color={look.balcony} roughness={0.85} />
-      <InstancedBoxes matrices={rails} color={look.rail} roughness={0.15} metalness={0.2} opacity={look.railOpacity} />
-    </group>
-  );
-}
-
-/** Renders a set of unit boxes with per-instance transforms. */
-function InstancedBoxes({
-  matrices, color, roughness = 0.8, metalness = 0, opacity = 1,
-}: {
-  matrices: THREE.Matrix4[];
-  color: string;
-  roughness?: number;
-  metalness?: number;
-  opacity?: number;
-}) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  useLayoutEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
-    mesh.count = matrices.length;
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [matrices]);
-  if (matrices.length === 0) return null;
-  return (
-    <instancedMesh
-      key={matrices.length}
-      ref={ref}
-      args={[undefined, undefined, matrices.length]}
-      castShadow={opacity >= 1}
-      receiveShadow
-    >
-      <boxGeometry />
-      <meshStandardMaterial
-        color={color}
-        roughness={roughness}
-        metalness={metalness}
-        transparent={opacity < 1}
-        opacity={opacity}
-      />
-    </instancedMesh>
-  );
-}
-
-/**
- * Full-height vertical fin/louvre screen wrapping a Ground or Podium
- * footprint — thin blades spaced along the perimeter, projecting outward
- * from the facade line, in front of the solid tier volume.
- */
-export function VerticalFinScreen({
-  polygon, fromY, toY, params, color = "#9a8364",
-}: {
-  polygon: Point[];
-  fromY: number;
-  toY: number;
-  params: FacadeParams;
-  color?: string;
-}) {
-  const { finSpacingM, finWidthM, finDepthM } = params;
-  const height = toY - fromY;
-
-  const fins = useMemo(() => {
-    const matrices: THREE.Matrix4[] = [];
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-    const yAxis = new THREE.Vector3(0, 1, 0);
-    const midY = fromY + height / 2;
-
-    const ccw = isCounterClockwise(polygon);
-    const outSign = ccw ? 1 : -1; // outward normal = (uy,-ux) for CCW polygons (local xy)
-    const spacing = Math.max(0.2, finSpacingM);
-    const finW = Math.max(0.03, finWidthM);
-    const finD = Math.max(0.05, finDepthM);
-
-    for (let e = 0; e < polygon.length; e++) {
-      const a = polygon[e];
-      const b = polygon[(e + 1) % polygon.length];
-      const ex = b.x - a.x;
-      const ey = b.y - a.y;
-      const len = Math.hypot(ex, ey);
-      if (len < 0.4) continue;
-      const ux = ex / len;
-      const uy = ey / len;
-      const nx = uy * outSign;
-      const ny = -ux * outSign;
-      const yaw = Math.atan2(uy, ux);
-      quat.setFromAxisAngle(yAxis, yaw);
-
-      const count = Math.max(1, Math.round(len / spacing));
-      const step = len / count;
-      for (let k = 0; k < count; k++) {
-        const t = (k + 0.5) * step;
-        // Inner face of the blade sits on the facade line; it projects outward by finD.
-        const px = a.x + ux * t + nx * (finD / 2);
-        const py = a.y + uy * t + ny * (finD / 2);
-        pos.set(px, midY, -py);
-        scale.set(finW, height, finD);
-        matrices.push(new THREE.Matrix4().compose(pos, quat, scale));
-      }
-    }
-    return matrices;
-  }, [polygon, fromY, height, finSpacingM, finWidthM, finDepthM]);
-
-  return <InstancedBoxes matrices={fins} color={color} roughness={0.5} metalness={0.25} />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1661,8 +1242,8 @@ function Pool({ plan, toY, look }: { plan: PlacedAmenity; toY: number; look: Ame
   const water = useMemo(() => [boxMatrix(center, toY + 0.11, length, 0.06, width, yaw)], [center, toY, length, width, yaw]);
   return (
     <>
-      <InstancedBoxes matrices={rim} color={look.rim} roughness={0.9} />
-      <InstancedBoxes matrices={water} color={look.water} roughness={0.05} metalness={0.3} opacity={0.9} />
+      <Instanced matrices={rim} color={look.rim} roughness={0.9} />
+      <Instanced matrices={water} color={look.water} roughness={0.05} metalness={0.3} opacity={0.9} />
     </>
   );
 }
@@ -1707,14 +1288,8 @@ function LoungeBbq({ plan, toY, look }: { plan: PlacedAmenity; toY: number; look
 
   return (
     <>
-      <InstancedBoxes matrices={loungers} color={look.lounger} roughness={0.65} />
-      <InstancedBoxes matrices={bbq} color={look.bbq} roughness={0.5} metalness={0.15} />
+      <Instanced matrices={loungers} color={look.lounger} roughness={0.65} />
+      <Instanced matrices={bbq} color={look.bbq} roughness={0.5} metalness={0.15} />
     </>
   );
-}
-
-/** Tier colours for the immersive walk (the realistic palette). */
-export function colourForKind(kind?: "tower" | "ground" | "podium" | "basement") {
-  const t = PALETTES.realistic.tiers[kind ?? "tower"];
-  return { fill: t.fill, edge: t.edge, opacity: t.opacity, roughness: t.roughness };
 }

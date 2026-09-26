@@ -257,29 +257,38 @@ export interface Project {
   northDeg?: number;
 }
 
-/** Parameters for the modelled residential facade in the Massing viewer. */
+/** Tower façade concept of the designed façade. */
+export type TowerFacadeStyle = "balconies" | "curtain" | "fins" | "frame";
+/** Metal accent for fins, handrails, crown and canopy. */
+export type FacadeAccent = "white" | "champagne" | "bronze" | "graphite";
+/** Glass tint of the curtain wall. */
+export type FacadeGlass = "azure" | "aqua" | "grey" | "bronze";
+
+/** Designed façade of the 3D Massing viewer (visual only — areas never change). */
 export interface FacadeConfig {
-  /** "massing" = flat volumes (default); "residential" = modelled facade with slabs, glazing, mullions and balconies. */
+  /** "residential" = designed façade (default); "massing" = plain tier volumes. */
   mode?: "massing" | "residential";
-  /** Vertical mullion spacing along the facade (m). Default 3.2. */
-  panelWidthM?: number;
-  /** Balcony slab depth (m). 0 hides balconies. Default 1.8. */
+  /** Tower façade concept. Default "balconies". */
+  style?: TowerFacadeStyle;
+  /** Glass tint. Default "azure". */
+  glass?: FacadeGlass;
+  /** Metal accent. Default "champagne". */
+  accent?: FacadeAccent;
+  /** Soft rounded tower corners. Default true. */
+  roundedCorners?: boolean;
+  /** Architectural crown with a rooftop sky pool and lounge. Default true. */
+  crown?: boolean;
+  /** Glazed lobby with an entrance canopy on the front of the plot. Default true. */
+  entrance?: boolean;
+  /** Balcony depth of the balconies concept (m). Default 2.2. */
   balconyDepthM?: number;
-  /** A balcony is placed on every Nth facade bay (rhythm mode) or with 1/N probability (random mode). Default 2. */
-  balconyEveryNBays?: number;
-  /** Fraction (0–1) of facade cells filled with a solid precast panel instead of glazing. Default 0.25. */
-  solidPanelRatio?: number;
-  /** "rhythm" = balconies stack in regular columns; "random" = scattered per cell. Default "rhythm". */
-  balconyLayout?: "rhythm" | "random";
-  /** Seed for the deterministic random pattern (solids + random balconies). */
-  patternSeed?: number;
-  /** Treatment for the Ground + Podium tiers: "massing" = flat volumes (default); "fins" = a full-height vertical fin/louvre screen wrapping the perimeter, in front of the solid volume. */
+  /** Ground + podium: "fins" = metal screen of vertical fins (default); "massing" = solid with floor bands. */
   groundPodiumTreatment?: "massing" | "fins";
-  /** Centre-to-centre spacing between fins (m). Default 1.0. */
+  /** Centre-to-centre spacing between podium fins (m). Default 0.9. */
   finSpacingM?: number;
-  /** Fin blade width along the facade direction (m). Default 0.15. */
+  /** Podium fin blade width (m). Default 0.14. */
   finWidthM?: number;
-  /** Fin projection depth outward from the facade (m). Default 0.35. */
+  /** Podium fin projection (m). Default 0.45. */
   finDepthM?: number;
   /** Model a swimming pool on the podium roof deck, only if it fits. */
   podiumPool?: boolean;

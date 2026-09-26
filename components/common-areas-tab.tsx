@@ -73,8 +73,8 @@ export default function CommonAreasTab() {
 
   const yield_ = useMemo(() => computeTowerYield(project), [project]);
 
-  // Keep the persisted tower floor count in sync so Program / Parking / Lifts
-  // / Massing — which all read project.typeFloors.count / project.numFloors
+  // Keep the persisted tower floor count in sync so Program / Parking /
+  // Massing — which all read project.typeFloors.count / project.numFloors
   // directly — pick up the derived value without their own copy of this calc.
   useEffect(() => {
     if (yield_.towerFootprintM2 <= 0 || yield_.towerTargetGFA <= 0) return;

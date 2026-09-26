@@ -98,14 +98,6 @@ function buildKpis(m: ProjectMetrics): Kpi[] {
       step: "parking",
       tone: parkingTone,
     },
-    {
-      key: "lifts",
-      label: "Lifts",
-      value: m.lifts !== null ? String(m.lifts) : m.liftsOutOfChart ? "VT study" : "—",
-      sub: m.liftsOutOfChart ? "Outside DBC chart" : "DBC D.8.8",
-      step: "lifts",
-      tone: m.liftsOutOfChart ? "warn" : null,
-    },
   ];
 }
 

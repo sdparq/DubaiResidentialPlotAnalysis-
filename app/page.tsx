@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import { Library, X } from "lucide-react";
 import { useProject } from "@/lib/store";
 import PlotTab from "@/components/plot-tab";
@@ -9,7 +8,6 @@ import TypologiesTab from "@/components/typologies-tab";
 import ProgramTab from "@/components/program-tab";
 import CommonAreasTab from "@/components/common-areas-tab";
 import ParkingTab from "@/components/parking-tab";
-import LiftsTab from "@/components/lifts-tab";
 import MassingTab from "@/components/massing-tab";
 import ZonesTab from "@/components/zones-tab";
 import SummaryTab from "@/components/summary-tab";
@@ -20,8 +18,6 @@ import { NextStepCard, PageHeader } from "@/components/shell/page-header";
 import { projectMetrics } from "@/lib/metrics";
 import { STEPS, stepStatuses, type StepId } from "@/lib/workflow";
 import { BRAND } from "@/lib/brand";
-
-const ReportOverlay = dynamic(() => import("@/components/report"), { ssr: false });
 
 /** The Class Library is the shared pricing/mix database — kept out of the
  *  workflow. Set NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256 at build time to
@@ -59,7 +55,6 @@ export default function Page() {
   const [hydrated, setHydrated] = useState(false);
   const [libraryUnlocked, setLibraryUnlocked] = useState(false);
   const [drawer, setDrawer] = useState(false);
-  const [report, setReport] = useState(false);
   const project = useProject();
 
   const metrics = useMemo(() => projectMetrics(project), [project]);
@@ -160,7 +155,7 @@ export default function Page() {
 
       <div className="min-h-screen flex flex-col min-w-0">
         <header className="sticky top-0 z-30 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/85 border-b border-ink-200/80">
-          <TopBar onMenu={() => setDrawer(true)} onExport={() => setReport(true)} />
+          <TopBar onMenu={() => setDrawer(true)} />
           <div className="hidden md:block border-t border-ink-100">
             <KpiStrip metrics={metrics} onNavigate={go} />
           </div>
@@ -202,7 +197,6 @@ export default function Page() {
             {tab === "common" && <CommonAreasTab />}
             {tab === "summary" && <SummaryTab />}
             {tab === "parking" && <ParkingTab />}
-            {tab === "lifts" && <LiftsTab />}
             {tab === "massing" && <MassingTab />}
 
             {step && <NextStepCard step={step} onGo={(id: StepId) => go(id)} />}
@@ -219,7 +213,6 @@ export default function Page() {
         </footer>
       </div>
 
-      {report && <ReportOverlay onClose={() => setReport(false)} />}
     </div>
   );
 }
