@@ -1,11 +1,13 @@
 "use client";
 import dynamic from "next/dynamic";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BuildingComplex,
   Camera,
   Compass as CompassIcon,
   Focus,
   ImageDown,
+  MapPin,
   Maximize2,
   Pause,
   Play,
@@ -37,6 +39,8 @@ import { projectMetrics, type ProjectMetrics } from "@/lib/metrics";
 import { composeBrandedImage, downloadDataUrl, slug } from "@/lib/branded-image";
 import { BRAND } from "@/lib/brand";
 import { ACCENTS, FACADE_STYLES, GLASSES, resolveFacade, type FacadeParams } from "@/lib/facade";
+import { formatLatLng, isInUae, parseLatLng, type LatLng, type SiteContext } from "@/lib/site-context";
+import { useSiteContext, type ContextStatus } from "@/lib/use-site-context";
 import { BrandMark } from "./shell/brand-mark";
 
 const MassingScene = dynamic(() => import("./massing-scene"), {
@@ -245,6 +249,28 @@ export default function MassingTab() {
   const metrics = useMemo(() => projectMetrics(project), [project]);
   const northDeg = project.northDeg ?? 0;
 
+  // Real surroundings (OpenStreetMap) around the plot's location.
+  const location = project.location;
+  const contextRadius = project.siteContext?.radiusM ?? 400;
+  const contextOn = !!project.siteContext?.enabled && !!location;
+  const siteCtx = useSiteContext(location, contextRadius, contextOn);
+  const contextState: ContextStatus | "unplaced" = !location ? "unplaced" : contextOn ? siteCtx.status : "off";
+  const locationInputRef = useRef<HTMLInputElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
+  const siteContext = project.siteContext;
+  const toggleContext = useCallback(() => {
+    if (!location) {
+      // Nowhere to put the plot yet: take the user to the location field.
+      setPanel("site");
+      requestAnimationFrame(() => {
+        asideRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        locationInputRef.current?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    patch({ siteContext: { ...siteContext, enabled: !siteContext?.enabled } });
+  }, [location, siteContext, patch]);
+
   // ---- plot editor handlers ----
   function setPlotMode(next: "rectangular" | "polygon") {
     if (next === "polygon" && (!project.plotPolygon || project.plotPolygon.length < 3)) {
@@ -317,9 +343,13 @@ export default function MassingTab() {
           northDeg={northDeg}
           metrics={metrics}
           tiersPresent={tiersPresent}
+          context={siteCtx.status === "ready" && contextOn ? siteCtx.data : null}
+          contextRadius={contextRadius}
+          contextState={contextState}
+          onToggleContext={toggleContext}
         />
 
-        <aside className="card !p-0 overflow-hidden xl:sticky xl:top-[150px]">
+        <aside ref={asideRef} className="card !p-0 overflow-hidden xl:sticky xl:top-[150px] scroll-mt-4">
           <div className="px-4 pt-4 pb-3 border-b border-ink-100">
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="section-title">Design controls</h2>
@@ -442,6 +472,26 @@ export default function MassingTab() {
 
             {panel === "site" && (
               <>
+                <NorthControl value={northDeg} onChange={(v) => patch({ northDeg: v })} />
+                <SiteContextPanel
+                  location={location}
+                  enabled={!!siteContext?.enabled}
+                  radius={contextRadius}
+                  status={contextOn ? siteCtx.status : "off"}
+                  error={siteCtx.error}
+                  context={siteCtx.data}
+                  inputRef={locationInputRef}
+                  onLocation={(loc) =>
+                    patch({
+                      location: loc ?? undefined,
+                      // Placing the plot for the first time switches the surroundings on.
+                      siteContext: loc && siteContext?.enabled === undefined ? { ...siteContext, enabled: true } : siteContext,
+                    })
+                  }
+                  onEnabled={(v) => patch({ siteContext: { ...siteContext, enabled: v } })}
+                  onRadius={(r) => patch({ siteContext: { ...siteContext, radiusM: r } })}
+                  onRetry={siteCtx.retry}
+                />
                 <div className="grid gap-2">
                   <span className="text-[12px] font-medium text-ink-600">Plot geometry</span>
                   <div className="seg w-full grid grid-cols-2">
@@ -479,7 +529,6 @@ export default function MassingTab() {
                   towerUni={towerUni}
                   onPatch={patch}
                 />
-                <NorthControl value={northDeg} onChange={(v) => patch({ northDeg: v })} />
               </>
             )}
 
@@ -564,12 +613,20 @@ interface ViewerProps {
   northDeg: number;
   metrics: ProjectMetrics;
   tiersPresent: NonNullable<Volume["kind"]>[];
+  /** OpenStreetMap surroundings, when loaded. */
+  context: SiteContext | null;
+  contextRadius: number;
+  contextState: ContextStatus | "unplaced";
+  onToggleContext: () => void;
 }
+
+const OSM_CREDIT = "© OpenStreetMap contributors";
 
 const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
   const {
     projectId, projectName, zone, plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors,
     volumeLabels, facade, onAmenityFit, captureRef, northDeg, metrics, tiersPresent,
+    context, contextRadius, contextState, onToggleContext,
   } = props;
 
   const [style, setStyle] = useState<SceneStyle>("realistic");
@@ -665,6 +722,7 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
         stats: exportStats,
         brand: BRAND.wordmark,
         tagline: BRAND.tagline,
+        attribution: context ? `Surroundings ${OSM_CREDIT}` : undefined,
       });
       downloadDataUrl(img, `${slug(projectName)}-massing.png`);
     } finally {
@@ -706,6 +764,8 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
         quality={present ? "high" : "standard"}
         compassRef={compassRef}
         frameKey={projectId}
+        context={context}
+        contextRadius={contextRadius}
       />
 
       {/* Top-left: style + legend */}
@@ -743,7 +803,27 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
             ))}
           </div>
         )}
+        {contextState === "loading" && (
+          <div className={`${glass} rounded-lg px-2.5 py-1.5 flex items-center gap-2 text-[11.5px] text-ink-700`} role="status">
+            <span className="w-3 h-3 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            Loading surroundings…
+          </div>
+        )}
+        {contextState === "error" && (
+          <div className={`${glass} rounded-lg px-2.5 py-1.5 text-[11.5px] text-amber-800`} role="status">
+            Surroundings unavailable — retry in Site
+          </div>
+        )}
       </div>
+
+      {/* OpenStreetMap credit, required wherever its data is shown */}
+      {context && (
+        <div className="absolute z-10 right-3 top-[52px] px-1.5 py-0.5 rounded bg-white/75 text-[10.5px] text-ink-600 pointer-events-auto">
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="hover:underline">
+            {OSM_CREDIT}
+          </a>
+        </div>
+      )}
 
       {/* Top-right: camera */}
       <div className="absolute z-20 top-3 right-3 flex items-center gap-2">
@@ -875,6 +955,21 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
             >
               <TreePalm className="w-4 h-4" />
             </button>
+            <button
+              onClick={onToggleContext}
+              className={`${toolBtn} ${
+                contextState === "ready" || contextState === "loading" ? "text-brand-700 bg-brand-50" : "text-ink-600 hover:bg-ink-900/5"
+              }`}
+              title={
+                contextState === "unplaced"
+                  ? "Neighbouring buildings — add the plot location in Site first"
+                  : "Neighbouring buildings, streets and water (OpenStreetMap)"
+              }
+              aria-label="Neighbouring buildings"
+              aria-pressed={contextState === "ready" || contextState === "loading"}
+            >
+              <BuildingComplex className="w-4 h-4" />
+            </button>
             <button onClick={() => void exportImage()} className={`${toolBtn} text-ink-700 hover:bg-ink-900/5`} title="Download a branded presentation image (PNG)" aria-label="Download image" disabled={exporting}>
               {exporting ? <Camera className="w-4 h-4 animate-pulse" /> : <ImageDown className="w-4 h-4" />}
               <span className="hidden md:inline">Image</span>
@@ -932,7 +1027,161 @@ function NorthControl({ value, onChange }: { value: number; onChange: (v: number
         />
         <p className="text-[11.5px] text-ink-500 leading-snug">
           Bearing of true north, clockwise from the top of the plot drawing. Copy it from the north arrow on the
-          affection plan (0° = drawing is north-up). It orients the sun & shadow study.
+          affection plan (0° = drawing is north-up). It orients the sun & shadow study and the surroundings.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const RADII = [250, 400, 600];
+
+function SiteContextPanel({
+  location, enabled, radius, status, error, context, inputRef, onLocation, onEnabled, onRadius, onRetry,
+}: {
+  location: LatLng | undefined;
+  enabled: boolean;
+  radius: number;
+  status: ContextStatus;
+  error?: string;
+  context: SiteContext | null;
+  inputRef: React.RefObject<HTMLInputElement>;
+  onLocation: (loc: LatLng | null) => void;
+  onEnabled: (v: boolean) => void;
+  onRadius: (r: number) => void;
+  onRetry: () => void;
+}) {
+  const [draft, setDraft] = useState(location ? formatLatLng(location) : "");
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => {
+    setDraft(location ? formatLatLng(location) : "");
+    setInvalid(false);
+  }, [location]);
+
+  function commit() {
+    const text = draft.trim();
+    if (!text) {
+      if (location) onLocation(null);
+      setInvalid(false);
+      return;
+    }
+    const loc = parseLatLng(text);
+    if (!loc) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (!location || loc.lat !== location.lat || loc.lng !== location.lng) onLocation(loc);
+    else setDraft(formatLatLng(loc));
+  }
+
+  const estimated = context?.buildings.filter((b) => b.estimated).length ?? 0;
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="text-[12.5px] font-semibold text-ink-800 flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-ink-400" /> Location & surroundings
+        </span>
+      </div>
+      <div className="p-3 grid gap-3">
+        <label className="grid gap-1.5">
+          <span className="text-[11.5px] font-medium text-ink-600">Plot location</span>
+          <input
+            ref={inputRef}
+            className={`cell-input ${invalid ? "!border-red-400" : ""}`}
+            value={draft}
+            placeholder="25.18650, 55.26400 or a Google Maps link"
+            spellCheck={false}
+            inputMode="text"
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === "Enter" && commit()}
+            aria-invalid={invalid}
+          />
+          {invalid ? (
+            <span className="text-[11.5px] text-red-700">
+              Not a location — paste coordinates like 25.18650, 55.26400 or a Google Maps link.
+            </span>
+          ) : (
+            <span className="text-[11.5px] text-ink-500 leading-snug">
+              In Google Maps, right-click the middle of the plot and click the coordinates to copy them.
+            </span>
+          )}
+        </label>
+        {location && !isInUae(location) && (
+          <p className="text-[11.5px] text-amber-800 leading-snug -mt-1">
+            These coordinates are outside the UAE — check that the latitude comes first.
+          </p>
+        )}
+        {location && (
+          <a
+            href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[12px] font-medium text-brand-700 hover:text-brand-900 justify-self-start -mt-1"
+          >
+            Check it on Google Maps ↗
+          </a>
+        )}
+
+        <div className="panel divide-y divide-ink-100">
+          <ToggleRow
+            label="Neighbouring buildings"
+            hint="Buildings, streets and water from OpenStreetMap"
+            checked={enabled && !!location}
+            disabled={!location}
+            onChange={onEnabled}
+          />
+          <div className={`px-3 py-2.5 flex items-center justify-between gap-3 ${enabled && location ? "" : "opacity-45"}`}>
+            <span className="text-[12.5px] font-medium text-ink-900">Radius</span>
+            <div className="seg">
+              {RADII.map((r) => (
+                <button
+                  key={r}
+                  className="seg-btn !py-0.5"
+                  data-active={radius === r}
+                  disabled={!enabled || !location}
+                  onClick={() => onRadius(r)}
+                >
+                  {r} m
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {status === "loading" && (
+          <div className="flex items-center gap-2 text-[12px] text-ink-600" role="status">
+            <span className="w-3.5 h-3.5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            Loading OpenStreetMap…
+          </div>
+        )}
+        {status === "ready" && context && (
+          <p className="text-[12px] text-ink-700 leading-snug" role="status">
+            {context.buildings.length.toLocaleString("en-US")} buildings · {context.roads.length.toLocaleString("en-US")} streets
+            {context.water.length > 0 ? " · water" : ""}
+            {estimated > 0 && (
+              <span className="text-ink-500"> — {estimated.toLocaleString("en-US")} without a height in OpenStreetMap, shown at a typical height</span>
+            )}
+          </p>
+        )}
+        {status === "error" && (
+          <div className="flex items-start justify-between gap-3 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2">
+            <span className="text-[12px] text-amber-900 leading-snug">{error || "OpenStreetMap is not responding."}</span>
+            <button className="btn btn-secondary btn-xs shrink-0" onClick={onRetry}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        <p className="text-[11.5px] text-ink-500 leading-snug">
+          The plot centre goes on these coordinates, turned by True north above. Buildings standing on the plot are
+          left out. Map data{" "}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-ink-800">
+            © OpenStreetMap contributors
+          </a>
+          .
         </p>
       </div>
     </div>

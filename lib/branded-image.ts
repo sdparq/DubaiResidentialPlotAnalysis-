@@ -10,6 +10,8 @@ export interface BrandedImageInfo {
   stats: Array<[label: string, value: string]>;
   brand: string;
   tagline: string;
+  /** Data credit printed in the corner of the render (e.g. OpenStreetMap). */
+  attribution?: string;
 }
 
 const MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a9d84"/><stop offset="1" stop-color="#0a584a"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#g)"/><path d="M16 15.6 L27 21.1 L16 26.6 L5 21.1 Z" fill="none" stroke="#fff" stroke-opacity="0.45" stroke-width="1.1" stroke-linejoin="round"/><path d="M16 4.6 L22 7.6 L16 10.6 L10 7.6 Z" fill="#fff"/><path d="M10 7.6 L16 10.6 L16 24.1 L10 21.1 Z" fill="#fff" fill-opacity="0.78"/><path d="M16 10.6 L22 7.6 L22 21.1 L16 24.1 Z" fill="#fff" fill-opacity="0.5"/></svg>`;
@@ -58,6 +60,21 @@ export async function composeBrandedImage(src: string, info: BrandedImageInfo): 
   ctx.fillStyle = "#eef1f5";
   ctx.fillRect(0, 0, W, H);
   ctx.drawImage(shot, 0, 0);
+
+  if (info.attribution) {
+    const size = Math.round(11 * u);
+    ctx.font = `400 ${size}px ${family}`;
+    const tw = ctx.measureText(info.attribution).width;
+    const px = Math.round(6 * u);
+    const bx = W - tw - px * 2 - Math.round(10 * u);
+    const by = H - size - px * 2 - Math.round(10 * u);
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.fillRect(bx, by, tw + px * 2, size + px * 2);
+    ctx.fillStyle = "#3d4657";
+    ctx.textBaseline = "top";
+    ctx.fillText(info.attribution, bx + px, by + px);
+    ctx.textBaseline = "alphabetic";
+  }
 
   // Title bar
   ctx.fillStyle = "#0b1324";

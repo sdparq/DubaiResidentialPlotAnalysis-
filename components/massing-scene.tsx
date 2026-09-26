@@ -22,6 +22,8 @@ import type { FacadeParams } from "@/lib/facade";
 import { planPodiumAmenities, type PlacedAmenity } from "@/lib/podium-amenities";
 import { sunDirectionWorld } from "@/lib/sun";
 import { Instanced, cellRand, polyToShape } from "./scene-kit";
+import { SiteContextLayer, contextTopWithin, type ContextLook, type FocusBox } from "./site-context-layer";
+import type { SiteContext } from "@/lib/site-context";
 import { LobbyFacade, PodiumFacade, TowerFacade, crownHeight, type FacadeMaterialKind } from "./tower-facade";
 
 /** model = white architectural model · diagram = colour by tier · realistic = Dubai daylight. */
@@ -72,6 +74,8 @@ interface ScenePalette {
   floorLineOpacity: number;
   /** Material set of the designed façade. */
   facadeKind: FacadeMaterialKind;
+  /** Neighbouring buildings, streets and water (OpenStreetMap). */
+  context: ContextLook;
   amenity: AmenityLook;
   planting: { trunk: string; leaf: string; palmLeaf: string } | null;
   env: number;
@@ -113,6 +117,7 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     floorLine: "#aeb6c2",
     floorLineOpacity: 0.55,
     facadeKind: "model",
+    context: { building: "#eceae5", edge: "#c2c8d1", road: "#dcdfe4", water: "#cfe2ea" },
     amenity: { water: "#9fcfe0", rim: "#ebe9e3", lounger: "#e0dcd3", bbq: "#b8b4ab" },
     planting: { trunk: "#d9d5cc", leaf: "#dce3d8", palmLeaf: "#dce3d8" },
     env: 0.55,
@@ -135,6 +140,7 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     floorLine: "#ffffff",
     floorLineOpacity: 0.6,
     facadeKind: "model",
+    context: { building: "#e3e6ea", edge: "#bcc3cd", road: "#dcdfe4", water: "#d3e5ee" },
     amenity: { water: "#8fd0e6", rim: "#f1efe9", lounger: "#e4e0d7", bbq: "#b8b4ab" },
     planting: null,
     env: 0.45,
@@ -166,6 +172,7 @@ export const PALETTES: Record<SceneStyle, ScenePalette> = {
     floorLine: "#5d6b73",
     floorLineOpacity: 0.35,
     facadeKind: "real",
+    context: { building: "#ddd8cf", edge: null, road: "#4a4d53", water: "#3f8fae" },
     amenity: { water: "#3aa6c2", rim: "#e3ddcf", lounger: "#b08d62", bbq: "#3f3d38" },
     planting: { trunk: "#8a7355", leaf: "#4f7a3a", palmLeaf: "#4a7732" },
     env: 0.85,
@@ -220,6 +227,10 @@ export interface SceneProps {
   compassRef?: RefObject<HTMLElement>;
   /** Changing this re-frames the camera on the model (e.g. the project id). */
   frameKey?: string;
+  /** Real surroundings of the plot (OpenStreetMap), in local metres around the plot centroid. */
+  context?: SiteContext | null;
+  /** Radius the surroundings were downloaded for (m). */
+  contextRadius?: number;
 }
 
 interface CameraGoal {
@@ -274,6 +285,7 @@ function SceneContents(
     plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors, volumeLabels,
     showAnnotations = true, resetView, autoRotate, captureRef, facade, onAmenityFit,
     palette, high, topY, maxDim, sun, northDeg = 0, showPlanting = true, compassRef, frameKey,
+    context, contextRadius = 400,
   } = props;
 
   const bbox = useMemo(() => polygonBBox(plot), [plot]);
@@ -298,6 +310,29 @@ function SceneContents(
       topY: frameTop,
     };
   }, [bbox, frameTop]);
+
+  // With the surroundings on, the sun's shadow camera also covers the nearby
+  // neighbours, so their shadows fall on the scheme and the scheme's on them.
+  const centroid = useMemo(() => polygonCentroid(plot), [plot]);
+  const shadowFit: FitInfo = useMemo(() => {
+    if (!context || context.buildings.length === 0) return fit;
+    const r = Math.min(contextRadius, 220);
+    return {
+      ...fit,
+      minX: Math.min(fit.minX, centroid.x - r),
+      maxX: Math.max(fit.maxX, centroid.x + r),
+      minZ: Math.min(fit.minZ, -centroid.y - r),
+      maxZ: Math.max(fit.maxZ, -centroid.y + r),
+      topY: Math.max(fit.topY, contextTopWithin(context, r)),
+    };
+  }, [fit, context, contextRadius, centroid]);
+  // The scheme's box, for seeing through the neighbours that stand in front of it.
+  const focus: FocusBox = useMemo(
+    () => ({ minX: bbox.minX, maxX: bbox.maxX, minZ: -bbox.maxY, maxZ: -bbox.minY, topY: fit.topY }),
+    [bbox, fit.topY],
+  );
+  const fogNear = context ? Math.max(maxDim * 2.6, contextRadius * 0.7) : maxDim * 2.6;
+  const fogFar = context ? Math.max(maxDim * 9, contextRadius * 1.9) : maxDim * 9;
 
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const goalRef = useRef<CameraGoal | null>(null);
@@ -331,7 +366,7 @@ function SceneContents(
       ) : (
         <GradientBackground top={palette.bgTop} bottom={palette.bgBottom} />
       )}
-      <fog attach="fog" args={[palette.fog, maxDim * 2.6, maxDim * 9]} />
+      <fog attach="fog" args={[palette.fog, fogNear, fogFar]} />
 
       {/* Light-former environment for soft sky light and reflections — no network fetches. */}
       {/* Keyed by style: a one-frame environment only re-renders when it remounts. */}
@@ -342,7 +377,7 @@ function SceneContents(
       </Environment>
 
       <hemisphereLight args={[palette.hemi.sky, palette.hemi.ground, palette.hemi.intensity]} />
-      <SunLight dir={sunDir} fit={fit} intensity={sunIntensity} color={sunColor} mapSize={high ? 4096 : 2048} />
+      <SunLight dir={sunDir} fit={shadowFit} intensity={sunIntensity} color={sunColor} mapSize={high ? 4096 : 2048} />
 
       <SiteAndBuilding
         plot={plot}
@@ -360,10 +395,23 @@ function SceneContents(
         maxDim={maxDim}
         showPlanting={showPlanting}
         fit={fit}
+        streets={!!context && context.roads.length > 0}
       />
+
+      {context && (
+        <SiteContextLayer
+          context={context}
+          plot={plot}
+          centroid={centroid}
+          northDeg={northDeg}
+          look={palette.context}
+          focus={focus}
+        />
+      )}
 
       <CameraRig
         resetView={resetView}
+        withContext={!!context}
         goalRef={goalRef}
         controlsRef={controlsRef}
         fit={fit}
@@ -409,13 +457,15 @@ interface SiteProps {
   maxDim: number;
   showPlanting: boolean;
   fit: FitInfo;
+  /** Real streets are drawn around the plot — skip the stylised road ring. */
+  streets?: boolean;
 }
 
 /** Everything that doesn't depend on the sun — memoised so a time-lapse only
  *  moves the light instead of rebuilding the building every frame. */
 const SiteAndBuilding = memo(function SiteAndBuilding({
   plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors, volumeLabels,
-  showAnnotations, facade, onAmenityFit, palette, topY, maxDim, showPlanting, fit,
+  showAnnotations, facade, onAmenityFit, palette, topY, maxDim, showPlanting, fit, streets = false,
 }: SiteProps) {
   const designed = !palette.plainVolumes && facade?.mode === "residential" ? facade : null;
   const isDesigned = (v: Volume) =>
@@ -511,7 +561,8 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
   // Tier chips sit at mid-height of their volume, nudged down where they would
   // stack on top of each other (thin ground / podium / basement tiers).
   const labelYs = useMemo(() => {
-    const gap = maxDim * 0.065;
+    // The surroundings view sits higher and further out, so chips need more room.
+    const gap = maxDim * (streets ? 0.09 : 0.065);
     const ys = volumes.map((v) => (v.fromY + v.toY) / 2);
     const order = ys.map((y, i) => ({ y, i })).sort((a, b) => b.y - a.y);
     let above = Infinity;
@@ -520,7 +571,7 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
       above = ys[o.i];
     }
     return ys;
-  }, [volumes, maxDim]);
+  }, [volumes, maxDim, streets]);
   const tierBoundaries = useMemo(() => {
     const ys = new Set<number>([0]);
     volumes.forEach((v) => {
@@ -554,9 +605,10 @@ const SiteAndBuilding = memo(function SiteAndBuilding({
         />
       )}
 
-      {/* Street context: road ring, dashed centreline, then the sidewalk ring */}
-      <GroundRing inner={sidewalkOuter} outer={roadOuter} y={0.004} color={palette.road} roughness={0.95} />
-      {roadCentreline.length >= 3 && (
+      {/* Street context: road ring, dashed centreline, then the sidewalk ring.
+          With the real surroundings on, OpenStreetMap supplies the streets. */}
+      {!streets && <GroundRing inner={sidewalkOuter} outer={roadOuter} y={0.004} color={palette.road} roughness={0.95} />}
+      {!streets && roadCentreline.length >= 3 && (
         <Line
           points={roadCentreline}
           color={palette.roadLine}
@@ -882,15 +934,18 @@ function fitDistance(radius: number, fovDeg: number, aspect: number) {
   return radius / Math.sin(Math.min(v, h) / 2);
 }
 
-/** The aerial view: from the south-east, lower for towers so the façade reads. */
-function aerialGoal(f: FitInfo, aspect: number): CameraGoal {
+/**
+ * The aerial view: from the south-east, lower for towers so the façade reads —
+ * higher and further out with the surroundings on, to take in the block.
+ */
+function aerialGoal(f: FitInfo, aspect: number, withContext = false): CameraGoal {
   const radius = 0.5 * Math.sqrt(f.w * f.w + f.d * f.d + f.topY * f.topY) + 4;
   const tall = f.topY > Math.max(f.w, f.d);
   const az = (38 * Math.PI) / 180;
-  const el = ((tall ? 22 : 32) * Math.PI) / 180;
+  const el = ((tall ? 22 : 32) + (withContext ? 10 : 0)) * (Math.PI / 180);
   // Headroom for the viewer's floating toolbars at the top and bottom.
   const tgt = new THREE.Vector3(f.cx, f.topY * 0.44, f.cz);
-  const dist = fitDistance(radius, 32, aspect) * 1.22;
+  const dist = fitDistance(radius, 32, aspect) * (withContext ? 1.45 : 1.22);
   return {
     pos: new THREE.Vector3(
       tgt.x + Math.cos(el) * Math.sin(az) * dist,
@@ -903,9 +958,10 @@ function aerialGoal(f: FitInfo, aspect: number): CameraGoal {
 
 /** Frames the model, flies back to the aerial view on request and keeps the compass pointing north. */
 function CameraRig({
-  resetView, goalRef, controlsRef, fit, frameKey, northDeg, compassRef,
+  resetView, withContext = false, goalRef, controlsRef, fit, frameKey, northDeg, compassRef,
 }: {
   resetView?: number;
+  withContext?: boolean;
   goalRef: MutableRefObject<CameraGoal | null>;
   controlsRef: MutableRefObject<OrbitControlsImpl | null>;
   fit: FitInfo;
@@ -925,7 +981,7 @@ function CameraRig({
     const controls = controlsRef.current;
     if (framed.current === key || !controls || size.width === 0) return;
     framed.current = key;
-    const g = aerialGoal(fit, aspect);
+    const g = aerialGoal(fit, aspect, withContext);
     camera.position.copy(g.pos);
     camera.fov = 32;
     camera.updateProjectionMatrix();
@@ -937,9 +993,18 @@ function CameraRig({
 
   useEffect(() => {
     if (!resetView) return;
-    goalRef.current = aerialGoal(fit, aspect);
+    goalRef.current = aerialGoal(fit, aspect, withContext);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetView]);
+
+  // Surroundings switched on or off: glide to the matching aerial view.
+  const hadContext = useRef(withContext);
+  useEffect(() => {
+    if (hadContext.current === withContext) return;
+    hadContext.current = withContext;
+    goalRef.current = aerialGoal(fit, aspect, withContext);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withContext]);
 
   useFrame((_, delta) => {
     const controls = controlsRef.current;

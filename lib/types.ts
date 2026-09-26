@@ -255,6 +255,10 @@ export interface Project {
   /** Bearing of true north, clockwise from the drawing's +y axis (degrees).
    *  Orients the sun & shadow study. Default 0 = the drawing is north-up. */
   northDeg?: number;
+  /** WGS84 position of the plot centroid — places the site in its real surroundings. */
+  location?: { lat: number; lng: number };
+  /** Neighbouring buildings, streets and water from OpenStreetMap in the 3D massing. */
+  siteContext?: { enabled?: boolean; radiusM?: number };
 }
 
 /** Tower façade concept of the designed façade. */

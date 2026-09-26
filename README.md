@@ -47,6 +47,10 @@ something to show from the first click.
   architectural model) and *Diagram* (colour by tier, with legend).
 - **Dubai sun & shadow study** — pick 21 Mar / Jun / Sep / Dec, scrub or play the day from sunrise to sunset;
   the sun position is computed for Dubai (±0.1°) and oriented by the plot's true-north bearing.
+- **Real surroundings** — paste the plot's coordinates (or a Google Maps link) in *Site* and the neighbouring
+  buildings, streets and water come in from OpenStreetMap, within 250, 400 or 600 m: plain volumes around the
+  designed tower, with their shadows in the sun study. Buildings standing on the plot are left out, neighbours
+  in front of the tower turn see-through, and heights OSM doesn't have are shown at a typical value.
 - **Aerial view** — orbit, pan and zoom freely; one click flies back to the aerial view. Turntable rotation.
 - **Presentation mode** — full screen with the project title and headline figures, for client meetings.
 - **Presentation image** — a 2× PNG of the current view with a branded title bar and key figures.
@@ -61,6 +65,7 @@ from the demo scheme, 3D included) — record it with any screen recorder.
 - Calculations: pure TS modules in `lib/calc/`, covered by Vitest
 - 3D: react-three-fiber + drei; façades are generated from the tier footprints (`components/tower-facade.tsx`,
   plan geometry in `lib/facade-geometry.ts`) and drawn with instancing
+- Surroundings: OpenStreetMap via the Overpass API, downloaded in the browser (no key)
 - Icons: lucide-react
 - State: Zustand with `localStorage` persistence (+ optional Supabase cloud sync)
 
@@ -165,13 +170,27 @@ accounts. Without these settings the app runs unchanged in local-only mode.
 6. Redeploy. The top bar gains a **Team password** input; once unlocked, every change to a cloud-tracked
    project auto-saves, and teammates see a project as read-only while someone else has it open.
 
+## Surroundings (OpenStreetMap)
+
+The 3D surroundings are downloaded in the browser from the public Overpass API — no key and no cost, but the
+public servers give no service guarantee and ask heavy users to run their own. For a busy commercial
+deployment, point the app to a paid or self-hosted Overpass server at build time:
+
+```
+NEXT_PUBLIC_OVERPASS_URL=https://your-overpass.example.com/api/interpreter
+```
+
+The public servers stay as fallbacks. Map data is © OpenStreetMap contributors (ODbL): the credit is shown in
+the viewer and printed on exported images whenever the surroundings are visible — keep it. When surroundings
+are on, the plot's coordinates are sent to that server; they stay off until someone enters a location.
+
 ## Deploy to Netlify
 
 The app is a fully static export — no server needed.
 
 1. In Netlify: **Add new site → Import from Git** → pick this repo and branch.
 2. `netlify.toml` is read automatically (build `npm run build`, publish `out/`, Node 20).
-3. Optional: add the cloud sync and Class Library variables above in Site settings → Environment.
+3. Optional: add the cloud sync, Class Library and Overpass variables above in Site settings → Environment.
 4. Deploy.
 
 ## Adding new normatives
