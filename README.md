@@ -1,11 +1,10 @@
 # Dubai Residential Plot Analysis
 
-**Feasibility studies for residential plots in Dubai — in minutes, not weeks.**
+**Feasibility studies for residential plots in Dubai and Abu Dhabi — in minutes, not weeks.**
 
-A web platform for developers, investment teams and architects: trace the plot, define typologies and the
-unit program, and get GFA, parking, lifts, waste room, 3D massing on the real site, sun and views, and the
-project economics — including the residual land value — computed live, with a printable report and a
-multi-sheet Excel export ready to share.
+A web platform for developers, investment teams and architects: read the plot from the DLD affection plan,
+split the GFA by use, get the unit mix for the zone's market class, fill the apartments floor by floor, size
+parking and lifts, see the massing in 3D and print a one-page areas & ratios report.
 
 Ships with the neutral **PLOTIQ** brand and is built to be white-labelled per client in one file (see
 [White-labelling](#white-labelling--rebranding)).
@@ -14,52 +13,29 @@ Ships with the neutral **PLOTIQ** brand and is built to be white-labelled per cl
 
 | Tab | What you get |
 | --- | --- |
-| 00 · Plot | Trace the parcel over the affection plan (PDF or image), or pick a polygon straight from a vector PDF; 2-point scale calibration |
-| 01 · Setup | Plot number, area / community, plot area, floors, heights · **planning constraints** (permitted GFA, max FAR, max height) with live pass / fail · location from coordinates or a pasted Google Maps link |
-| 02 · Typologies | Unit types with interior + balcony areas (m² and sq ft), occupancy and parking ratios |
-| 03 · Program | Typologies × floors matrix → units, sellable area, GFA; repeat a typical floor on every floor above in one click |
-| 04 · Common areas | Lobbies, corridors, lifts, MEP, amenities — each flagged GFA / BUA / open-air, in m² or % of GFA |
-| 05 · Parking | Required (per-typology ratios + other uses + accessible spaces) vs available by level |
-| 06 · Lifts | CIBSE Guide D up-peak round-trip time, handling capacity and interval, rule of thumb and a configurable minimum |
-| 07 · Waste | Dubai Municipality waste generation, storage and room sizing (every parameter editable) |
-| 08 · Massing | 3D volumes (block, podium + tower, courtyard, twin towers, stepped, L, U) and ranked variants — in studio or dropped on the real site with a satellite / topo basemap and OpenStreetMap neighbours |
-| 09 · Sun & Views | Annual sun hours or shadows at a date and UAE clock time, and views to a landmark, painted on the façades |
-| 10 · Economics | GDV, total development cost (incl. 4 % DLD land transfer fee), profit, margins, land price per sq ft of GFA and the **residual land value** at a target margin · prices in AED / sq ft or AED / m² |
-| 11 · Results | KPI dashboard, economics summary, compliance checks and a **Print / Save PDF** report |
+| 00 · Plot | Upload the affection plan (PDF / image). The parcel is detected by its DLD highlight colours and the scale from the dimension labels — polygon and calibration land with zero clicks. Trace ground / podium / tower footprints (several towers supported), zoom and pan for precision |
+| 01 · Setup | Zone (Dubai / Abu Dhabi) with automatic market-class detection, plot area, target GFA, stratified floor breakdown (basements / ground / podium / type floors) and GFA breakdown by use (residential, retail, commercial, hospitality) in m² or % |
+| 02 · Distribution | Tower floors derived from the residential GFA and the tower footprint (zoning cap optional); residential GFA split into apartments, amenities, circulation and services |
+| 03 · Typologies | Apply the class unit mix in one click, per-typology mix %, balcony % and how much of each balcony counts as GFA (0 / 50 / 100 %), Dubai DCD occupancy defaults |
+| 04 · Apartments | Units per floor, auto-filled from the apartments GFA and the unit mix (largest-remainder distribution) |
+| 05 · Parking | Required spaces per typology, retail and other uses, POD (People of Determination) tiered rule, parking surface vs basements / ground / podium and the number of basements needed |
+| 06 · Lifts | Dubai Building Code D.8.8 |
+| 07 · Massing | Stratified 3D model (basement / ground / podium / tower) with per-edge setbacks, street context, parametric façade, podium roof amenities, AI render (Gemini) and a first-person immersive walk |
+| 08 · Areas Summary | GFA, GSA (sellable) and construction BUA derivations and efficiency ratios |
+| 🔒 Class Library | Reference matrix of UAE market classes (A · most luxurious → G · economical): zones, unit mix, unit areas, prices, floor heights and parking standard — editable |
 
-Projects are saved automatically in the browser (IndexedDB — client data never leaves their machine).
-Share a project with *Export JSON*, keep a copy of everything with *Backup all* in the project menu, and
-restore either with *Import*. The Excel export writes 8 sheets: setup, typologies & mix, program, parking,
-lifts, waste room, economics and conclusions.
+**Report PDF** in the header produces a one-page areas & ratios summary ready to share.
 
-A scripted product walkthrough lives at `/demo` — every number in it is computed live from the bundled
-sample project (Dubai Production City), not hard-coded. The sample's prices and costs are illustrative.
-
-## Calculation methods
-
-- **Areas** — GFA = unit interiors + GFA common areas − shafts; BUA adds balconies and BUA-only commons;
-  sellable = interior + balcony. Program, parking and waste reproduce the reference spreadsheet cell by cell
-  (`lib/calc/parity.test.ts`).
-- **Lifts (CIBSE Guide D)** — `S = N·[1 − (1 − 1/N)^P]`, `H = N − Σ(i/N)^P`,
-  `RTT = 2·H·t_v + (S + 1)·t_s + 2·P·t_p`, handling per lift `300·P / RTT`. Lifts are sized on handling
-  capacity (5 % / 7 %) and on the target interval, then compared with the rule of thumb and the minimum count.
-- **Parking** — each typology uses its own ratio (Dubai defaults: 1 space per studio / 1BR / 2BR, 2 per 3BR+);
-  totals and other uses are rounded up to whole spaces; accessible (PRM) spaces as a share of the requirement.
-- **Economics** — residual land value = `(GDV × (1 − target margin) − all non-land costs) / (1 + DLD fee)`,
-  i.e. the most that can be paid for the plot while still hitting the target margin.
-- **Sun** — sun position from latitude, day of year and apparent solar time (UAE clock UTC+4 corrected for
-  longitude and the equation of time); façades are rotated with the plot's north heading.
-
-All defaults (ratios, rates, percentages) are editable per project. Results are pre-concept feasibility
-figures — always verify against current Dubai Municipality, Dubai Civil Defence and RTA requirements.
+Projects are saved in the browser automatically; enable the optional [cloud sync](#cloud-sync-optional) to
+share them with the whole team.
 
 ## Stack
 
 - Next.js 14 (App Router) + TypeScript + Tailwind — fully static export
 - Calculations: pure TS modules in `lib/calc/`, covered by Vitest
-- 3D: react-three-fiber + drei; site context from Esri World Imagery / Topo + OSM Overpass (free, no API keys)
-- State: Zustand persisted to IndexedDB (localStorage fallback), multi-project
-- Export: ExcelJS · Optional AI scheme render: Gemini image-to-image (user supplies their own key in the UI)
+- 3D: react-three-fiber + drei + postprocessing
+- State: Zustand with `localStorage` persistence (+ optional Supabase cloud sync)
+- Optional AI renders: Google Gemini (each user enters their own API key in the UI)
 
 ## Scripts
 
@@ -67,59 +43,113 @@ figures — always verify against current Dubai Municipality, Dubai Civil Defenc
 npm install
 npm run dev      # http://localhost:3000
 npm run build    # static export to out/
-npm test         # calculation, import, geometry and Excel tests
-```
-
-## Project structure
-
-```
-app/                   # Next.js routes (main app + /demo walkthrough)
-components/            # tab UIs, 3D scenes, shared NumInput
-lib/
-  brand.ts             # product identity — edit to white-label
-  types.ts             # data model
-  store.ts             # Zustand store (multi-project)
-  persist-storage.ts   # IndexedDB persistence + save-error reporting
-  project-io.ts        # import validation, backup format
-  site.ts              # plot / buildable / massing derivation shared by Massing and Sun & Views
-  massing.ts, geom.ts  # massing shapes and polygon maths
-  building-physics.ts  # sun, shadow and view analyses
-  export-xlsx.ts       # multi-sheet Excel export
-  standards/dubai.ts   # Dubai defaults (parking, waste, lifts) + area suggestions
-  calc/                # program, parking, lifts, garbage, economic, compliance
+npm test         # calculation, plot-detection and parity tests
 ```
 
 ## White-labelling / rebranding
 
-The product is brand-neutral by design so it can be sold or licensed per client:
-
-1. `lib/brand.ts` — wordmark, descriptor, product name, tagline. This is the only place a product/company
-   name exists in the codebase.
-2. `tailwind.config.ts` — the `brand` colour scale (currently a desert-sage green). Swap the 10 hex values to
-   restyle every accent in the app.
+1. `lib/brand.ts` — wordmark, descriptor, product name, tagline. It is the only place a product/company name
+   lives in the code (header, browser tab, report footer, demo).
+2. `tailwind.config.ts` — the `brand` colour scale. Swap the 10 hex values to restyle every accent.
 3. Optional: the logo mark is inline SVG in `components/header-bar.tsx`, the favicon is `app/icon.svg`.
+4. For each client deployment set their own cloud project and, if wanted, their own Class Library password
+   (below).
+
+## Class Library access
+
+The Class Library holds the shared price / unit-mix matrix and is hidden behind the padlock at the right of the
+tab bar. To restrict it to an admin, set `NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256` to the SHA-256 hex of the
+password at build time (only the hash ships in the bundle):
+
+```bash
+printf '%s' 'your-admin-password' | shasum -a 256
+```
+
+Without that variable the padlock opens the library directly.
+
+## Cloud sync (optional)
+
+The app can sync projects to a shared Supabase database so every team member sees and edits the same set of
+projects. The whole team enters with a **single password** that you choose — there are no individual user
+accounts. Without these settings the app runs unchanged in local-only mode.
+
+1. Create a Supabase project (free tier is enough). Note its `Project URL` and `anon public` key.
+2. In the SQL editor, run:
+
+   ```sql
+   create table public.projects (
+     id uuid primary key default gen_random_uuid(),
+     name text not null default 'Untitled project',
+     data jsonb not null default '{}'::jsonb,
+     created_by uuid references auth.users(id) on delete set null,
+     created_at timestamptz default now(),
+     updated_by uuid references auth.users(id) on delete set null,
+     updated_at timestamptz default now()
+   );
+   create index projects_updated_at_idx on public.projects (updated_at desc);
+
+   alter table public.projects enable row level security;
+   create policy "auth read"   on public.projects for select using (auth.role() = 'authenticated');
+   create policy "auth insert" on public.projects for insert with check (auth.role() = 'authenticated');
+   create policy "auth update" on public.projects for update using (auth.role() = 'authenticated');
+   create policy "auth delete" on public.projects for delete using (auth.role() = 'authenticated');
+
+   create function public.touch_updated_at() returns trigger language plpgsql as $$
+   begin new.updated_at = now(); new.updated_by = auth.uid(); return new; end $$;
+   create trigger projects_touch before update on public.projects
+   for each row execute function public.touch_updated_at();
+
+   -- Edit locks: while someone has a project open, teammates see it read-only
+   -- so nobody overwrites anyone's work. Locks expire on their own after 90 s
+   -- without a heartbeat (crashed browser, closed laptop). If this table is
+   -- missing the app still works — locking is just inactive.
+   create table public.project_locks (
+     project_id uuid primary key references public.projects(id) on delete cascade,
+     device_id text not null,
+     label text,
+     locked_at timestamptz not null default now()
+   );
+   alter table public.project_locks enable row level security;
+   create policy "auth read"   on public.project_locks for select using (auth.role() = 'authenticated');
+   create policy "auth insert" on public.project_locks for insert with check (auth.role() = 'authenticated');
+   create policy "auth update" on public.project_locks for update using (auth.role() = 'authenticated');
+   create policy "auth delete" on public.project_locks for delete using (auth.role() = 'authenticated');
+   ```
+
+3. In **Authentication → Providers → Email**, enable email and turn **off** "Confirm email".
+4. In **Authentication → Users → Add user → Create new user**, create the single shared team account:
+   - Email: any address, e.g. `team@example.com` (it does not need to be a real inbox).
+   - Password: the team password you'll hand out.
+   - Tick **Auto Confirm User**.
+
+   To rotate the password later, edit the same user and tell the team — old sessions end the next time they
+   load the app.
+5. Set the env vars (copy `.env.example` → `.env.local`, and add the same in Netlify → Site settings →
+   Environment):
+
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+   NEXT_PUBLIC_SUPABASE_SHARED_EMAIL=team@example.com
+   ```
+6. Redeploy. The header gains a **Team password** input; once unlocked, every change to a cloud-tracked
+   project auto-saves, and teammates see a project as read-only while someone else has it open.
 
 ## Deploy to Netlify
 
-The app is a fully static export — no server, no env vars, no plugins.
+The app is a fully static export — no server needed.
 
 1. In Netlify: **Add new site → Import from Git** → pick this repo and branch.
 2. `netlify.toml` is read automatically (build `npm run build`, publish `out/`, Node 20).
-3. Deploy.
-
-Any other static host (Vercel, Cloudflare Pages, S3…) works the same way.
-
-## Urban-context 3D view
-
-Massing → **In context** drops the project onto an Esri basemap and extrudes the surrounding buildings from
-OpenStreetMap. Set the location in Setup (paste coordinates or a Google Maps link) and, if the plot's +Y axis
-isn't true north, its north heading. Click any neighbour to override its height or hide it, add your own
-neighbour towers for plots not yet built, and move the building with *Click to place* for fine alignment.
-Esri tiles and Overpass are free, rate-limited services; if Overpass is busy the view and the sun analysis
-still work, and say so.
+3. Optional: add the cloud sync and Class Library variables above in Site settings → Environment.
+4. Deploy.
 
 ## Adding new normatives
 
-Standards live in `lib/standards/dubai.ts`. Add new jurisdictions as separate files (e.g. `abudhabi.ts`,
-`sharjah.ts`) and inject via the active project — no changes needed in calc modules if the rules follow the
-same shape.
+Standards live in `lib/standards/dubai.ts` and the market classes in `lib/zone-classes.ts`. Add new
+jurisdictions as separate files and inject them via the active project.
+
+## Disclaimer
+
+Results are feasibility-level figures, not for construction. Verify against the current Dubai Municipality,
+Dubai Civil Defence, RTA and Dubai Building Code requirements before committing to a scheme or submission.

@@ -1,13 +1,37 @@
 "use client";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useStore, useProject } from "@/lib/store";
 import type { ParcelInfo } from "@/lib/types";
-import { processParcel } from "@/lib/parcel-extract";
+import { processParcel, type PdfTextItem } from "@/lib/parcel-extract";
+import {
+  pickReferenceEdge,
+  polygonPxToMetres,
+  tryAutoCalibrate,
+  type AutoCalibrationResult,
+} from "@/lib/plot-auto-calibrate";
 import { polygonArea, polygonCentroid, type Point } from "@/lib/geom";
 import { fmt2 } from "@/lib/format";
 import PlanTrace, { type TraceMode } from "./plan-trace";
 
 type Phase = "idle" | "rendering" | "done" | "error";
+
+type TraceTarget = "plot" | "ground" | "podium" | "tower";
+const TIER_TARGETS = ["ground", "podium", "tower"] as const;
+const TIER_LABELS: Record<(typeof TIER_TARGETS)[number], string> = {
+  ground: "Ground",
+  podium: "Podium",
+  tower: "Tower",
+};
+const TIER_COLORS: Record<(typeof TIER_TARGETS)[number], string> = {
+  ground: "#8a9a76",
+  podium: "#a17e4c",
+  tower: "#3f5135",
+};
+const TIER_POLY_FIELD = {
+  ground: "groundPolygon",
+  podium: "podiumPolygon",
+  tower: "towerPolygon",
+} as const;
 
 export default function PlotTab() {
   const project = useProject();
@@ -20,12 +44,25 @@ export default function PlotTab() {
 
   // Trace state
   const [traceMode, setTraceMode] = useState<TraceMode>("idle");
+  const [traceTarget, setTraceTarget] = useState<TraceTarget>("plot");
   const [livePoints, setLivePoints] = useState<{ x: number; y: number }[]>([]);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
   const [calibInput, setCalibInput] = useState<string>("");
 
-  // Vector candidates detected from PDF on upload (not persisted)
+  // Vector candidates + text runs detected from PDF on upload (not persisted)
   const [candidates, setCandidates] = useState<Point[][]>([]);
+  const [textItems, setTextItems] = useState<PdfTextItem[]>([]);
+
+  // Auto-calibration attempt against the currently traced/selected polygon.
+  // Requires visual confirmation before it's applied — see StepBlock 2 below.
+  const [autoCalib, setAutoCalib] = useState<AutoCalibrationResult | null>(null);
+  const [autoCalibTried, setAutoCalibTried] = useState(false);
+
+  // Whether the current traced polygon was picked automatically by the
+  // yellow-fill/red-stroke parcel detector (drives the little note in Step 1).
+  const [autoPicked, setAutoPicked] = useState(false);
+  // Whether the scale was applied automatically from the PDF cotas (Step 2 note).
+  const [autoApplied, setAutoApplied] = useState(false);
 
   async function handleFiles(files: FileList | null) {
     const file = files?.[0];
@@ -34,6 +71,17 @@ export default function PlotTab() {
     try {
       setPhase("rendering");
       const result = await processParcel(file);
+      const autoPoly =
+        result.autoParcelIndex !== null ? result.candidatePolygons[result.autoParcelIndex] : null;
+      // If the previous image was dropped to free localStorage quota but the
+      // trace/calibration survived, and the re-uploaded file renders at the
+      // same pixel size (same drawing), keep the existing geometry intact.
+      const preserve =
+        !!parcel &&
+        !parcel.imageDataUrl &&
+        !!parcel.tracePolygonPx &&
+        parcel.imageNaturalWidth === result.imageNaturalWidth &&
+        parcel.imageNaturalHeight === result.imageNaturalHeight;
       const next: ParcelInfo = {
         fileName: file.name,
         fileType: file.type || "image/jpeg",
@@ -41,11 +89,28 @@ export default function PlotTab() {
         uploadedAt: Date.now(),
         imageNaturalWidth: result.imageNaturalWidth,
         imageNaturalHeight: result.imageNaturalHeight,
+        // The DLD parcel highlight was recognised — trace it without asking.
+        tracePolygonPx: preserve ? parcel.tracePolygonPx : autoPoly ?? undefined,
+        calibration: preserve ? parcel.calibration : undefined,
+        tierTracesPx: preserve ? parcel.tierTracesPx : undefined,
       };
       patch({ parcel: next });
       setCandidates(result.candidatePolygons);
-      // Auto-enter selecting mode if we found candidates
-      if (result.candidatePolygons.length > 0) {
+      setTextItems(result.textItems);
+      setAutoCalib(null);
+      setAutoCalibTried(false);
+      setAutoPicked(!!autoPoly && !preserve);
+      if (preserve) {
+        setTraceMode("idle");
+      } else if (autoPoly) {
+        // Polygon locked in — run scale detection immediately; when the cota
+        // consensus is strong this applies polygon + area with no clicks at
+        // all. Pass the text items explicitly: the setTextItems above hasn't
+        // committed yet.
+        setTraceMode("idle");
+        runAutoCalibration(autoPoly, next, result.textItems);
+      } else if (result.candidatePolygons.length > 0) {
+        // Fall back to manual pick among the ranked candidates.
         setTraceMode("selecting");
       }
       setPhase("done");
@@ -63,51 +128,249 @@ export default function PlotTab() {
     setTraceMode("idle");
     setLivePoints([]);
     setCandidates([]);
+    setTextItems([]);
+    setAutoCalib(null);
+    setAutoCalibTried(false);
+    setAutoPicked(false);
+    setAutoApplied(false);
+  }
+
+  /** Read the plot's scale straight from the dimension labels printed on the
+   *  PDF and — when the consensus is strong (≥3 agreeing cotas) — apply it
+   *  immediately: polygon + area land in the project with zero extra clicks.
+   *  Weaker detections surface as a review panel in Step 2 instead; no
+   *  detection at all falls back to manual 2-point calibration.
+   *  Returns true when the scale was applied automatically. */
+  function runAutoCalibration(poly: Point[], parcelObj: ParcelInfo, items: PdfTextItem[] = textItems): boolean {
+    const result = tryAutoCalibrate(poly, items);
+    setAutoCalib(result);
+    setAutoCalibTried(true);
+    if (result?.confident) {
+      const ref = pickReferenceEdge(result, poly);
+      const { plotPolygon, areaM2 } = polygonPxToMetres(poly, result.scale);
+      // Prefer the plan's declared area verbatim when the scale was anchored
+      // to it — the polygon then agrees with the official figure exactly.
+      const area = result.anchoredAreaM2 ?? Math.round(areaM2 * 100) / 100;
+      patch({
+        parcel: { ...parcelObj, tracePolygonPx: poly, calibration: ref },
+        plotMode: "polygon",
+        plotPolygon,
+        plotArea: project.plotArea > 0 ? project.plotArea : area,
+      });
+      setAutoApplied(true);
+      return true;
+    }
+    setAutoApplied(false);
+    return false;
   }
 
   function selectCandidate(idx: number) {
     if (!parcel) return;
     const poly = candidates[idx];
     if (!poly || poly.length < 3) return;
-    patch({ parcel: { ...parcel, tracePolygonPx: poly, calibration: undefined } });
+    const nextParcel: ParcelInfo = { ...parcel, tracePolygonPx: poly, calibration: undefined };
+    patch({ parcel: nextParcel });
     setTraceMode("idle");
     setCandidates([]);
+    setAutoPicked(false);
+    runAutoCalibration(poly, nextParcel);
   }
 
   /* ---------- Trace flow ---------- */
   function startTrace() {
+    setTraceTarget("plot");
     setTraceMode("tracing");
     setLivePoints([]);
+    setAutoCalib(null);
+    setAutoCalibTried(false);
+    setAutoPicked(false);
+    setAutoApplied(false);
   }
   function cancelTrace() {
     setTraceMode("idle");
+    setTraceTarget("plot");
     setLivePoints([]);
   }
+
+  /** Similarity transform (uniform scale + Y flip + translation) that maps the
+   *  traced plot outline (px) onto the persisted plot polygon (plot-local
+   *  metres). Applying it to a tier trace lands the tier footprint in exactly
+   *  the same frame Massing works in — including area-anchored calibrations,
+   *  which only differ by a uniform scale. */
+  function tierPxToLocal(px: Point[]): Point[] | null {
+    const tracePx = parcel?.tracePolygonPx;
+    const plotLocal = project.plotPolygon;
+    if (!tracePx || !plotLocal || tracePx.length < 2 || tracePx.length !== plotLocal.length) return null;
+    let ai = 0, bi = 1, best = -1;
+    for (let i = 0; i < tracePx.length; i++) {
+      for (let j = i + 1; j < tracePx.length; j++) {
+        const d = Math.hypot(tracePx[i].x - tracePx[j].x, tracePx[i].y - tracePx[j].y);
+        if (d > best) { best = d; ai = i; bi = j; }
+      }
+    }
+    const dLocal = Math.hypot(plotLocal[ai].x - plotLocal[bi].x, plotLocal[ai].y - plotLocal[bi].y);
+    if (best < 1e-6 || dLocal <= 0) return null;
+    const s = dLocal / best;
+    let tx = 0, ty = 0;
+    for (let i = 0; i < tracePx.length; i++) {
+      tx += plotLocal[i].x - s * tracePx[i].x;
+      ty += plotLocal[i].y + s * tracePx[i].y;
+    }
+    tx /= tracePx.length;
+    ty /= tracePx.length;
+    return px.map((p) => ({ x: s * p.x + tx, y: -s * p.y + ty }));
+  }
+
+  /* ---------------- Tier footprints — every tier is a LIST ----------------
+   * Each tier (ground / podium / tower) can hold any number of blocks. The
+   * legacy singular fields count as block #1 until the first plural write
+   * migrates them, so existing projects keep working untouched. */
+  const TIER_PLURAL_FIELD = {
+    ground: "groundPolygons",
+    podium: "podiumPolygons",
+    tower: "towerPolygons",
+  } as const;
+  const TIER_TRACE_KEY = { ground: "grounds", podium: "podiums", tower: "towers" } as const;
+
+  const tierPolys = useMemo(() => {
+    const pick = (
+      plural: { x: number; y: number }[][] | undefined,
+      single: { x: number; y: number }[] | undefined,
+    ) => plural ?? (single && single.length >= 3 ? [single] : []);
+    return {
+      ground: pick(project.groundPolygons, project.groundPolygon),
+      podium: pick(project.podiumPolygons, project.podiumPolygon),
+      tower: pick(project.towerPolygons, project.towerPolygon),
+    };
+  }, [
+    project.groundPolygons, project.groundPolygon,
+    project.podiumPolygons, project.podiumPolygon,
+    project.towerPolygons, project.towerPolygon,
+  ]);
+
+  const tierTracesPx = useMemo(() => {
+    const t = parcel?.tierTracesPx;
+    const pick = (
+      plural: { x: number; y: number }[][] | undefined,
+      single: { x: number; y: number }[] | undefined,
+    ) => plural ?? (single && single.length >= 3 ? [single] : []);
+    return {
+      ground: pick(t?.grounds, t?.ground),
+      podium: pick(t?.podiums, t?.podium),
+      tower: pick(t?.towers, t?.tower),
+    };
+  }, [parcel?.tierTracesPx]);
+
+  /** Write a tier's whole block list (polygons + pixel traces) at once. */
+  function writeTier(
+    tier: (typeof TIER_TARGETS)[number],
+    polys: Point[][],
+    traces: Point[][],
+  ) {
+    patch({
+      [TIER_PLURAL_FIELD[tier]]: polys.length > 0 ? polys : undefined,
+      // Retire the legacy singular field the moment we touch this tier.
+      [TIER_POLY_FIELD[tier]]: undefined,
+      parcel: parcel
+        ? {
+            ...parcel,
+            tierTracesPx: {
+              ...parcel.tierTracesPx,
+              [TIER_TRACE_KEY[tier]]: traces.length > 0 ? traces : undefined,
+              [tier]: undefined,
+            },
+          }
+        : parcel,
+    });
+  }
+
+  function startTierTrace(tier: (typeof TIER_TARGETS)[number]) {
+    setTraceTarget(tier);
+    setTraceMode("tracing");
+    setLivePoints([]);
+  }
+
+  function commitTierTrace(tier: (typeof TIER_TARGETS)[number], px: Point[]) {
+    const local = tierPxToLocal(px);
+    if (!local) {
+      alert(
+        "The plot polygon no longer matches the traced outline (it was edited in Massing, or the plot isn't calibrated). Re-trace and calibrate the plot first.",
+      );
+      return;
+    }
+    if (!parcel) return;
+    // Every tier accumulates: a new trace ADDS a block.
+    writeTier(tier, [...tierPolys[tier], local], [...tierTracesPx[tier], px]);
+  }
+
+  function removeTierBlock(tier: (typeof TIER_TARGETS)[number], index: number) {
+    writeTier(
+      tier,
+      tierPolys[tier].filter((_, i) => i !== index),
+      tierTracesPx[tier].filter((_, i) => i !== index),
+    );
+  }
+
+  /** Reuse the tower outlines for ground / podium — the common case where the
+   *  base repeats the tower footprint, so it needn't be traced twice. */
+  function copyTowersTo(tier: "ground" | "podium") {
+    if (tierPolys.tower.length === 0) return;
+    if (
+      tierPolys[tier].length > 0 &&
+      !confirm(
+        `Replace the ${tierPolys[tier].length} traced ${TIER_LABELS[tier].toLowerCase()} block(s) with the ${tierPolys.tower.length} tower footprint(s)?`,
+      )
+    ) {
+      return;
+    }
+    writeTier(tier, [...tierPolys.tower], [...tierTracesPx.tower]);
+  }
+
   function finishTrace() {
     if (livePoints.length < 3) {
       alert("Click at least 3 corners to define a polygon.");
       return;
     }
     if (!parcel) return;
-    patch({
-      parcel: { ...parcel, tracePolygonPx: livePoints, calibration: undefined },
-    });
+    if (traceTarget !== "plot") {
+      commitTierTrace(traceTarget, livePoints);
+      setTraceMode("idle");
+      setTraceTarget("plot");
+      setLivePoints([]);
+      return;
+    }
+    const nextParcel: ParcelInfo = { ...parcel, tracePolygonPx: livePoints, calibration: undefined };
+    patch({ parcel: nextParcel });
     setTraceMode("idle");
+    runAutoCalibration(livePoints, nextParcel);
     setLivePoints([]);
-    // Polygon traced; user still needs to calibrate to get metres
   }
-  function onTraceClick(p: { x: number; y: number }) {
+  function onTraceClick(p: { x: number; y: number }, meta?: { screenPxPerImagePx: number }) {
     if (traceMode !== "tracing") return;
-    // Click near first point closes the polygon
+    // Click ON the first point's marker closes the polygon. The threshold is
+    // ~the marker radius in SCREEN pixels — constant to the eye at any zoom.
+    // (It used to be 2% of the image width in IMAGE pixels, which at 4× zoom
+    // swallowed clicks tens of screen-px away from the start point, so small
+    // footprints — the reason to zoom in — closed after their third vertex.)
     if (livePoints.length >= 3) {
       const a = livePoints[0];
       const dist = Math.hypot(p.x - a.x, p.y - a.y);
-      const W = parcel?.imageNaturalWidth ?? 1000;
-      if (dist < W * 0.02) {
+      const threshold =
+        meta && meta.screenPxPerImagePx > 0
+          ? 14 / meta.screenPxPerImagePx
+          : (parcel?.imageNaturalWidth ?? 1000) * 0.02;
+      if (dist < threshold) {
         // Close
         const final = livePoints;
-        if (parcel) patch({ parcel: { ...parcel, tracePolygonPx: final, calibration: undefined } });
+        if (traceTarget !== "plot") {
+          commitTierTrace(traceTarget, final);
+        } else if (parcel) {
+          const nextParcel: ParcelInfo = { ...parcel, tracePolygonPx: final, calibration: undefined };
+          patch({ parcel: nextParcel });
+          runAutoCalibration(final, nextParcel);
+        }
         setTraceMode("idle");
+        setTraceTarget("plot");
         setLivePoints([]);
         return;
       }
@@ -130,6 +393,27 @@ export default function PlotTab() {
     const next = livePoints.length < 2 ? [...livePoints, p] : [livePoints[1], p];
     setLivePoints(next);
   }
+  /** Shared core: convert the traced polygon (px) to metres given a
+   *  metres-per-pixel scale, recentre on its centroid (flipping Y so the
+   *  visual top becomes +y), and persist plot polygon + area + a calibration
+   *  record (used for the "Calibrated · X m ref" badge elsewhere). */
+  function commitScale(scale: number, calibration: { p1: Point; p2: Point; metres: number }) {
+    if (!parcel || !parcel.tracePolygonPx) return;
+    const inMetres = parcel.tracePolygonPx.map((p) => ({
+      x: p.x * scale,
+      y: -p.y * scale,
+    }));
+    const c = polygonCentroid(inMetres);
+    const recentred = inMetres.map((p) => ({ x: p.x - c.x, y: p.y - c.y }));
+    const area = polygonArea(recentred);
+    patch({
+      parcel: { ...parcel, calibration },
+      plotMode: "polygon",
+      plotPolygon: recentred,
+      plotArea: project.plotArea > 0 ? project.plotArea : Math.round(area * 100) / 100,
+    });
+  }
+
   function applyCalibration() {
     if (!parcel || !parcel.tracePolygonPx) return;
     if (livePoints.length < 2) {
@@ -147,31 +431,42 @@ export default function PlotTab() {
       alert("Calibration points are too close together.");
       return;
     }
-    const scale = metres / distPx; // metres per pixel
-    // Convert traced polygon (px) -> metres, recentre on centroid, flip Y
-    const inMetres = parcel.tracePolygonPx.map((p) => ({
-      x: p.x * scale,
-      y: -p.y * scale, // flip so visual top becomes +y
-    }));
-    const c = polygonCentroid(inMetres);
-    const recentred = inMetres.map((p) => ({ x: p.x - c.x, y: p.y - c.y }));
-    const area = polygonArea(recentred);
-
-    patch({
-      parcel: { ...parcel, calibration: { p1, p2, metres } },
-      plotMode: "polygon",
-      plotPolygon: recentred,
-      plotArea: project.plotArea > 0 ? project.plotArea : Math.round(area * 100) / 100,
-    });
+    commitScale(metres / distPx, { p1, p2, metres });
     setTraceMode("idle");
     setLivePoints([]);
     setCalibInput("");
+    setAutoCalib(null);
+    setAutoApplied(false);
+  }
+
+  /** Apply the auto-detected scale. Uses the matched edge whose implied scale
+   *  is closest to the overall median as the illustrative p1/p2 reference —
+   *  its metres value is derived from the applied scale (not the raw label)
+   *  so the "Calibrated · X m ref" badge stays exactly self-consistent. */
+  function applyAutoCalibration() {
+    if (!parcel || !parcel.tracePolygonPx || !autoCalib) return;
+    const best = [...autoCalib.matches].sort(
+      (a, b) => Math.abs(a.impliedScale - autoCalib.scale) - Math.abs(b.impliedScale - autoCalib.scale)
+    )[0];
+    const p1 = parcel.tracePolygonPx[best.edgeIndex];
+    const p2 = parcel.tracePolygonPx[(best.edgeIndex + 1) % parcel.tracePolygonPx.length];
+    const metres = autoCalib.scale * best.pixelLength;
+    commitScale(autoCalib.scale, { p1, p2, metres });
+    setAutoCalib(null);
+  }
+
+  function dismissAutoCalibration() {
+    setAutoCalib(null);
+    startCalibrate();
   }
 
   function clearTrace() {
     if (!parcel) return;
     if (!confirm("Clear traced polygon and calibration?")) return;
     patch({ parcel: { ...parcel, tracePolygonPx: undefined, calibration: undefined } });
+    setAutoCalib(null);
+    setAutoCalibTried(false);
+    setAutoApplied(false);
   }
 
   /* ---------- derived ---------- */
@@ -194,13 +489,28 @@ export default function PlotTab() {
         <div className="mb-5">
           <h2 className="section-title">Plot drawing</h2>
           <p className="section-sub">
-            Upload the affection plan or plot drawing (PDF or image), trace the parcel boundary by clicking each
-            corner, then calibrate the scale by clicking two points whose distance you know.
+            Upload the affection plan or plot drawing, then trace the parcel boundary by clicking each corner and
+            calibrate the scale by clicking two known points and entering the cota.
           </p>
         </div>
 
         {!parcel && phase === "idle" && (
           <Dropzone onFiles={handleFiles} inputRef={inputRef} />
+        )}
+
+        {parcel && !parcel.imageDataUrl && (phase === "done" || phase === "idle") && (
+          <div className="grid gap-4">
+            <div className="border border-amber-300 bg-amber-50 text-amber-900 p-4 text-sm">
+              <div className="font-medium mb-1">Plan image removed to free browser storage</div>
+              <div className="text-amber-800/90">
+                Your browser&apos;s local storage filled up, so the plan drawing image
+                (<span className="font-medium">{parcel.fileName}</span>) was dropped to keep the project
+                data safe. All traced geometry, calibration and areas are intact — re-upload the same
+                drawing below to see it again.
+              </div>
+            </div>
+            <Dropzone onFiles={handleFiles} inputRef={inputRef} />
+          </div>
         )}
 
         {phase === "rendering" && (
@@ -218,7 +528,7 @@ export default function PlotTab() {
           </div>
         )}
 
-        {parcel && (phase === "done" || phase === "idle") && (
+        {parcel && !!parcel.imageDataUrl && (phase === "done" || phase === "idle") && (
           <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-6">
             {/* Image with overlay */}
             <div>
@@ -227,7 +537,7 @@ export default function PlotTab() {
                   parcel={parcel}
                   mode={traceMode}
                   tracePolygonPx={
-                    traceMode === "idle" || traceMode === "calibrating"
+                    traceMode === "idle" || traceMode === "calibrating" || traceTarget !== "plot"
                       ? parcel.tracePolygonPx
                       : undefined
                   }
@@ -236,8 +546,20 @@ export default function PlotTab() {
                   hoverPoint={hoverPoint}
                   candidates={traceMode === "selecting" ? candidates : undefined}
                   onSelectCandidate={selectCandidate}
-                  onPick={(p) => {
-                    if (traceMode === "tracing") onTraceClick(p);
+                  extraPolygons={TIER_TARGETS.flatMap((t) =>
+                    tierTracesPx[t]
+                      .filter((pts) => pts.length >= 3)
+                      .map((pts, i) => ({
+                        points: pts,
+                        color: TIER_COLORS[t],
+                        label:
+                          tierTracesPx[t].length > 1
+                            ? `${TIER_LABELS[t]} ${i + 1}`
+                            : TIER_LABELS[t],
+                      })),
+                  )}
+                  onPick={(p, meta) => {
+                    if (traceMode === "tracing") onTraceClick(p, meta);
                     else if (traceMode === "calibrating") onCalibClick(p);
                   }}
                   onHover={setHoverPoint}
@@ -311,6 +633,11 @@ export default function PlotTab() {
                 )}
                 {hasTrace && (
                   <div className="mt-2 text-[11px] text-ink-500">
+                    {autoPicked && (
+                      <span className="text-brand-700 font-medium">
+                        ✓ Parcel auto-detected (yellow fill / red boundary) ·{" "}
+                      </span>
+                    )}
                     {parcel.tracePolygonPx!.length} vertices captured{isCalibrated ? "" : " · awaiting calibration"}
                   </div>
                 )}
@@ -321,10 +648,45 @@ export default function PlotTab() {
                 title="Calibrate scale"
                 done={isCalibrated}
                 disabled={!hasTrace}
-                description="Click two points on the drawing whose distance you can read from its dimensions, then enter that distance in metres."
+                description={
+                  isCalibrated && autoApplied
+                    ? "Scale read automatically from the dimension labels printed on the PDF."
+                    : autoCalib && !autoCalib.confident && !isCalibrated
+                    ? "A possible scale was detected from the PDF cotas but the match is weak — review it or calibrate manually."
+                    : "Click two points on the drawing whose distance you can read from the cotas, then enter that distance in metres."
+                }
               >
                 {!hasTrace ? (
                   <div className="text-[11px] text-ink-400">Trace the polygon first</div>
+                ) : autoCalib && !autoCalib.confident && autoCalib.matches.length >= 2 && !isCalibrated && traceMode !== "calibrating" ? (
+                  <div className="grid gap-2">
+                    <div className="border border-amber-200 bg-amber-50 p-2">
+                      <div className="text-[10.5px] uppercase tracking-[0.10em] text-amber-900 font-medium mb-1">
+                        {autoCalib.matches.length} of {autoCalib.totalEdges} edges matched
+                        {autoCalib.deviationPct > 0 && ` · deviation ${autoCalib.deviationPct.toFixed(1)}%`}
+                        {" · needs review"}
+                      </div>
+                      <div className="grid gap-0.5">
+                        {autoCalib.matches.map((m) => (
+                          <div key={m.edgeIndex} className="flex items-center justify-between text-[11px] text-ink-700 tabular-nums">
+                            <span>Edge {m.edgeIndex + 1} · &quot;{m.labelText}&quot;</span>
+                            <span>{m.labelMetres.toFixed(2)} m</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-[10.5px] text-ink-500 mt-1">
+                        Scale: 1 px ≈ {autoCalib.scale.toFixed(4)} m
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button className="btn btn-primary btn-xs" onClick={applyAutoCalibration}>
+                        Apply detected scale
+                      </button>
+                      <button className="btn btn-secondary btn-xs" onClick={dismissAutoCalibration}>
+                        Calibrate manually instead
+                      </button>
+                    </div>
+                  </div>
                 ) : traceMode === "calibrating" ? (
                   <div className="grid gap-2">
                     <div className="text-[11px] text-ink-700">
@@ -362,9 +724,23 @@ export default function PlotTab() {
                     </button>
                   </div>
                 )}
+                {!isCalibrated && traceMode !== "calibrating" && autoCalibTried && !autoCalib && (
+                  <div className="mt-2 text-[11px] text-ink-500">
+                    No readable dimension labels found on the PDF — calibrate manually.
+                  </div>
+                )}
                 {isCalibrated && parcel.calibration && (
                   <div className="mt-2 text-[11px] text-ink-500">
-                    Reference: {parcel.calibration.metres.toFixed(2)} m between picked points
+                    {autoApplied && autoCalib ? (
+                      <span className="text-brand-700 font-medium">
+                        ✓ Auto-calibrated from {autoCalib.matches.length} cotas · deviation{" "}
+                        {autoCalib.deviationPct.toFixed(1)}%
+                        {autoCalib.anchoredAreaM2 !== null &&
+                          ` · area anchored to the plan's declared ${autoCalib.anchoredAreaM2.toLocaleString("en-US")} m²`}
+                      </span>
+                    ) : (
+                      <>Reference: {parcel.calibration.metres.toFixed(2)} m between picked points</>
+                    )}
                   </div>
                 )}
               </StepBlock>
@@ -372,22 +748,101 @@ export default function PlotTab() {
               {isCalibrated && (
                 <div className="border border-emerald-200 bg-emerald-50 text-emerald-900 p-3 text-xs">
                   <div className="font-semibold uppercase tracking-[0.10em] text-[10.5px]">Polygon ready</div>
-                  <div className="mt-1">Traced area: <strong>{fmt2(livePolygonArea)} m²</strong></div>
+                  <div className="mt-1">Plot area: <strong>{fmt2(livePolygonArea)} m²</strong></div>
                   <div className="text-emerald-800/80 mt-0.5">
-                    Saved to the Massing tab in polygon mode.
+                    Saved to Massing tab in polygon mode.
                   </div>
-                  {project.plotArea > 0 && Math.abs(project.plotArea - livePolygonArea) / project.plotArea > 0.005 && (
-                    <div className="mt-2 pt-2 border-t border-emerald-200 text-emerald-900">
-                      Setup plot area is <strong>{fmt2(project.plotArea)} m²</strong> ({(((livePolygonArea - project.plotArea) / project.plotArea) * 100).toFixed(1)}% difference).
-                      <button
-                        className="block mt-1 underline font-medium hover:text-emerald-700"
-                        onClick={() => patch({ plotArea: Math.round(livePolygonArea * 100) / 100 })}
-                      >
-                        Use the traced area instead
-                      </button>
-                    </div>
-                  )}
                 </div>
+              )}
+
+              {isCalibrated && (
+                <StepBlock
+                  step="3"
+                  title="Building footprints (optional)"
+                  done={TIER_TARGETS.some((t) => tierPolys[t].length > 0)}
+                  description="For plots where a tier's shape differs from a setback offset of the plot line: trace its footprint on the drawing. Massing uses a traced footprint verbatim instead of that tier's setbacks. Every tier accepts SEVERAL blocks — each becomes its own volume."
+                >
+                  <div className="grid gap-3">
+                    {TIER_TARGETS.map((tier) => {
+                      const blocks = tierPolys[tier];
+                      const tracingThis = traceMode === "tracing" && traceTarget === tier;
+                      const canCopy = tier !== "tower" && tierPolys.tower.length > 0;
+                      return (
+                        <div key={tier} className="grid gap-1">
+                          {blocks.map((poly, i) => (
+                            <div key={`${tier}-${i}`} className="flex items-center gap-2 text-[11.5px]">
+                              <span
+                                className="inline-block w-3 h-3 shrink-0 rounded-sm"
+                                style={{ backgroundColor: TIER_COLORS[tier] }}
+                              />
+                              <span className="w-[74px] text-ink-900">
+                                {blocks.length > 1 ? `${TIER_LABELS[tier]} ${i + 1}` : TIER_LABELS[tier]}
+                              </span>
+                              <span className="flex-1 text-ink-500 tabular-nums">
+                                {fmt2(polygonArea(poly))} m²
+                              </span>
+                              <button
+                                className="btn btn-danger btn-xs"
+                                onClick={() => removeTierBlock(tier, i)}
+                                disabled={traceMode !== "idle"}
+                                title="Remove this block"
+                              >✕</button>
+                            </div>
+                          ))}
+
+                          {tracingThis ? (
+                            <div className="flex items-center gap-2 text-[11.5px]">
+                              <span
+                                className="inline-block w-3 h-3 shrink-0 rounded-sm"
+                                style={{ backgroundColor: TIER_COLORS[tier] }}
+                              />
+                              <span className="w-[74px] text-ink-900">
+                                {TIER_LABELS[tier]} {blocks.length + 1}
+                              </span>
+                              <span className="flex-1 text-ink-500 tabular-nums">
+                                {livePoints.length} point{livePoints.length === 1 ? "" : "s"}…
+                              </span>
+                              <button className="btn btn-primary btn-xs" onClick={finishTrace}>Done</button>
+                              <button className="btn btn-secondary btn-xs" onClick={cancelTrace}>Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 text-[11.5px]">
+                              <span
+                                className="inline-block w-3 h-3 shrink-0 rounded-sm opacity-40"
+                                style={{ backgroundColor: TIER_COLORS[tier] }}
+                              />
+                              <span className="flex-1 text-ink-500">
+                                {blocks.length === 0
+                                  ? `${TIER_LABELS[tier]} — from setbacks`
+                                  : `${blocks.length} block${blocks.length === 1 ? "" : "s"} traced`}
+                              </span>
+                              {canCopy && (
+                                <button
+                                  className="btn btn-secondary btn-xs"
+                                  onClick={() => copyTowersTo(tier)}
+                                  disabled={traceMode !== "idle"}
+                                  title={`Reuse the ${tierPolys.tower.length} tower footprint(s) for the ${TIER_LABELS[tier].toLowerCase()}`}
+                                >⧉ Same as tower</button>
+                              )}
+                              <button
+                                className="btn btn-secondary btn-xs"
+                                onClick={() => startTierTrace(tier)}
+                                disabled={traceMode !== "idle"}
+                              >{blocks.length === 0 ? "Trace" : "+ Add block"}</button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10.5px] text-ink-500 mt-2 leading-snug">
+                    Click each corner on the drawing; click the first point (or Done) to close.
+                    Every block becomes its own volume in Massing, sharing that tier&apos;s floor
+                    count and height. <strong>Same as tower</strong> copies the tower outlines onto
+                    the ground floor or podium when the base repeats them. The footprint must sit
+                    inside the plot for setbacks compliance — the app doesn&apos;t enforce it.
+                  </p>
+                </StepBlock>
               )}
             </div>
           </div>

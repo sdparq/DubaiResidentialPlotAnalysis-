@@ -13,7 +13,9 @@
   "dependencies": {
     "@react-three/drei": "9.122.0",
     "@react-three/fiber": "8.18.0",
-    "exceljs": "4.4.0",
+    "@react-three/postprocessing": "^2.16.3",
+    "@supabase/supabase-js": "^2.105.4",
+    "n8ao": "^1.10.2",
     "next": "14.2.35",
     "pdfjs-dist": "4.10.38",
     "polygon-clipping": "0.15.7",

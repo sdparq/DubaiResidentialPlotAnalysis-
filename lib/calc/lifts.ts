@@ -1,70 +1,242 @@
 import type { Project } from "../types";
-import { DUBAI_STANDARDS } from "../standards/dubai";
+
+/* -------------------------------------------------------------------------- */
+/*    Dubai Building Code D.8.8 — Passenger elevators in residential apts.   */
+/* -------------------------------------------------------------------------- */
+
+/** Figure D.13 — minimum lifts by population (rows) × occupied floors (cols).
+ *  null = "blank" in the chart (out of range → VT consultant required). */
+const D13_FLOOR_BRACKETS: [number, number][] = [
+  [1, 5],
+  [6, 10],
+  [11, 15],
+  [16, 20],
+  [21, 25],
+  [26, 30],
+  [31, 35],
+];
+const D13_POP_BRACKETS: [number, number][] = [
+  [0, 200],
+  [201, 300],
+  [301, 400],
+  [401, 500],
+  [501, 600],
+  [601, 700],
+  [701, 800],
+  [801, 900],
+  [901, 1000],
+  [1001, 1200],
+];
+// Rows aligned with D13_FLOOR_BRACKETS, cols with D13_POP_BRACKETS.
+const D13_TABLE: (number | null)[][] = [
+  [   1,    1,    2,    2, null, null, null, null, null, null], //  1- 5
+  [   2,    2,    2,    2,    3,    3,    3, null, null, null], //  6-10
+  [   2,    2,    2,    3,    3,    3,    4,    4,    4,    5], // 11-15
+  [   2,    3,    3,    3,    3,    4,    4,    4,    5,    5], // 16-20
+  [   2,    3,    3,    3,    4,    4,    4,    5,    5,    6], // 21-25
+  [   3,    3,    3,    3,    4,    4,    5,    5,    5,    6], // 26-30
+  [null,    3,    3,    4,    4,    5,    5,    5,    6,    6], // 31-35
+];
+
+/** Figure D.14 — additional lifts by boarding floors. Two sub-charts depending
+ *  on whether population > 700 or ≤ 700. Blanks → out of range. */
+const D14_BOARDING_BRACKETS = [1, 2, 3, 4, 5, 6];
+const D14_TABLE_HIGH_POP: (number | null)[][] = [
+  // 1   2   3   4   5   6
+  [  0,  0,  0, null, null, null], //  1- 5
+  [  0,  0,  0,  1, null, null],   //  6-10
+  [  0,  0,  0,  1,  1,  1],       // 11-15
+  [  0,  0,  1,  1,  1,  1],       // 16-20
+  [  0,  0,  1,  1,  1,  1],       // 21-25
+  [  0,  0,  1,  1,  2,  2],       // 26-30
+  [  0,  0,  1,  1,  2,  2],       // 31-35
+];
+const D14_TABLE_LOW_POP: (number | null)[][] = [
+  // 1   2   3   4   5   6
+  [  0,  0,  0, null, null, null], //  1- 5
+  [  0,  0,  0,  1, null, null],   //  6-10
+  [  0,  0,  0,  1,  1,  1],       // 11-15
+  [  0,  0,  1,  1,  1,  1],       // 16-20
+  [  0,  0,  1,  1,  1,  1],       // 21-25
+  [  0,  0,  1,  1,  1,  1],       // 26-30
+  [  0,  0,  1,  1,  1,  1],       // 31-35
+];
+
+function rangeIndex(value: number, brackets: [number, number][]): number {
+  for (let i = 0; i < brackets.length; i++) {
+    const [lo, hi] = brackets[i];
+    if (value >= lo && value <= hi) return i;
+  }
+  // Beyond the chart — fall back to the highest bracket.
+  if (value > brackets[brackets.length - 1][1]) return brackets.length - 1;
+  return -1;
+}
+
+function boardingIndex(boarding: number): number {
+  if (boarding <= 0) return -1;
+  if (boarding >= D14_BOARDING_BRACKETS[D14_BOARDING_BRACKETS.length - 1]) return D14_BOARDING_BRACKETS.length - 1;
+  return boarding - 1;
+}
+
+export interface DBCLiftLookup {
+  fromPopulation: number | null;
+  fromBoarding: number | null;
+  total: number | null;
+  outOfChart: boolean;
+  beyondChart: boolean;     // outside the highest bracket
+  populationBracketIdx: number;
+  floorBracketIdx: number;
+  boardingBracketIdx: number;
+}
+
+export function dbcResidentialLifts(opts: {
+  population: number;
+  occupiedFloors: number;
+  boardingFloors: number;
+}): DBCLiftLookup {
+  const { population, occupiedFloors, boardingFloors } = opts;
+
+  const fIdx = rangeIndex(occupiedFloors, D13_FLOOR_BRACKETS);
+  const pIdx = rangeIndex(population, D13_POP_BRACKETS);
+  const bIdx = boardingIndex(boardingFloors);
+
+  const fromPopulation = fIdx >= 0 && pIdx >= 0 ? D13_TABLE[fIdx][pIdx] : null;
+  const d14Table = population > 700 ? D14_TABLE_HIGH_POP : D14_TABLE_LOW_POP;
+  const fromBoarding = fIdx >= 0 && bIdx >= 0 ? d14Table[fIdx][bIdx] : null;
+
+  const outOfChart = fromPopulation === null || fromBoarding === null;
+  const beyondChart =
+    occupiedFloors > D13_FLOOR_BRACKETS[D13_FLOOR_BRACKETS.length - 1][1] ||
+    population > D13_POP_BRACKETS[D13_POP_BRACKETS.length - 1][1] ||
+    boardingFloors > D14_BOARDING_BRACKETS[D14_BOARDING_BRACKETS.length - 1];
+
+  const total =
+    fromPopulation !== null && fromBoarding !== null
+      ? fromPopulation + fromBoarding
+      : null;
+
+  return {
+    fromPopulation,
+    fromBoarding,
+    total,
+    outOfChart,
+    beyondChart,
+    populationBracketIdx: pIdx,
+    floorBracketIdx: fIdx,
+    boardingBracketIdx: bIdx,
+  };
+}
+
+/** Table D.6 — minimum / recommended elevator specifications. */
+export interface MinLiftSpec {
+  ratedKg: number;
+  persons: number;
+  cabinW_mm: number;
+  cabinD_mm: number;
+  cabinH_mm: number;
+  doorW_mm: number;
+  doorH_mm: number;
+  doorType: string;
+  category: "min" | "recommended";
+  description: string;
+}
+
+export function minPassengerLiftSpec(occupiedFloors: number, recommended = false): MinLiftSpec {
+  if (occupiedFloors <= 10) {
+    return {
+      ratedKg: 750,
+      persons: 10,
+      cabinW_mm: 1200,
+      cabinD_mm: 1500,
+      cabinH_mm: 2300,
+      doorW_mm: 900,
+      doorH_mm: 2100,
+      doorType: "Two-panel centre opening",
+      category: "min",
+      description: "Min for floors ≤ 10",
+    };
+  }
+  if (recommended) {
+    return {
+      ratedKg: 1350,
+      persons: 18,
+      cabinW_mm: 2000,
+      cabinD_mm: 1500,
+      cabinH_mm: 2300,
+      doorW_mm: 1100,
+      doorH_mm: 2100,
+      doorType: "Two-panel centre opening",
+      category: "recommended",
+      description: "Recommended for floors > 10",
+    };
+  }
+  return {
+    ratedKg: 1050,
+    persons: 14,
+    cabinW_mm: 1600,
+    cabinD_mm: 1500,
+    cabinH_mm: 2300,
+    doorW_mm: 1100,
+    doorH_mm: 2100,
+    doorType: "Two-panel centre opening",
+    category: "min",
+    description: "Min for floors > 10",
+  };
+}
+
+export function minServiceLiftSpec(recommended = false): MinLiftSpec {
+  if (recommended) {
+    return {
+      ratedKg: 1600,
+      persons: 21,
+      cabinW_mm: 1400,
+      cabinD_mm: 2400,
+      cabinH_mm: 2500,
+      doorW_mm: 1200,
+      doorH_mm: 2100,
+      doorType: "Two-panel centre opening",
+      category: "recommended",
+      description: "Recommended service elevator",
+    };
+  }
+  return {
+    ratedKg: 1275,
+    persons: 17,
+    cabinW_mm: 1200,
+    cabinD_mm: 2300,
+    cabinH_mm: 2500,
+    doorW_mm: 1100,
+    doorH_mm: 2100,
+    doorType: "Two-panel centre opening",
+    category: "min",
+    description: "Min service elevator",
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Project calc                                  */
+/* -------------------------------------------------------------------------- */
 
 export interface LiftsResult {
   byFloor: { floor: number; units: number; population: number }[];
   totalUnits: number;
   totalPopulation: number;
-  demandStandard: number;
-  demandPremium: number;
-  /** Rated persons for the cabin (kg ÷ 75). */
-  ratedPersons: number;
-  /** P — average passengers per up-peak trip (80 % of rated, rounded down). */
-  personsPerTrip: number;
-  /** N — floors served above the main terminal. */
-  floorsServed: number;
-  totalTravelHeight: number;
-  /** t_v — time to travel one floor-to-floor distance at rated speed, s. */
-  interfloorTimeS: number;
-  /** S — probable number of stops per round trip. */
-  probableStops: number;
-  /** H — highest reversal floor. */
-  highestReversalFloor: number;
-  /** t_s and t_p actually used, s. */
-  timePerStopS: number;
-  passengerTransferS: number;
-  rttSeconds: number;
-  tripsPer5Min: number;
-  /** Up-peak handling capacity of one lift, persons per 5 minutes (rounded down). */
-  capacityPerLift: number;
-  liftsCIBSEStandard: number;
-  liftsCIBSEPremium: number;
-  targetIntervalS: number;
-  liftsForInterval: number;
-  liftsCIBSE: number;
-  ruleOfThumbLifts: number;
-  dcdMinLifts: number;
-  liftsPractical: number;
+  occupiedFloors: number;
+  boardingFloors: number;
+  dbcFromPopulation: number | null;
+  dbcFromBoarding: number | null;
+  dbcTotal: number | null;
+  dbcOutOfChart: boolean;
+  dbcBeyondChart: boolean;
   liftsRecommended: number;
-  /** Average interval with the recommended number of lifts, s. */
-  intervalAchievedS: number;
-  /** 5-minute handling capacity with the recommended lifts, as a fraction of the population. */
-  handlingAchievedPct: number;
   governing: string;
+  passengerMin: MinLiftSpec;
+  passengerRecommended: MinLiftSpec;
+  serviceMin: MinLiftSpec;
+  serviceRecommended: MinLiftSpec;
 }
 
-const DEFAULT_TRANSFER_S = 1.2;
-const DEFAULT_INTERVAL_S = 60;
-
-function roundTo(n: number, digits: number) {
-  const f = Math.pow(10, digits);
-  return Math.round(n * f) / f;
-}
-
-/**
- * Up-peak traffic analysis following the classical round-trip-time method of CIBSE Guide D:
- *
- *   S   = N · [1 − (1 − 1/N)^P]                       probable stops
- *   H   = N − Σ_{i=1}^{N−1} (i/N)^P                   highest reversal floor
- *   RTT = 2·H·t_v + (S + 1)·t_s + 2·P·t_p
- *   HC  = 300 · P / RTT                                persons per lift per 5 minutes
- *
- * Lifts are sized on both handling capacity (5 % / 7 % of the population in 5 minutes) and on the
- * target average interval (RTT / L), then compared with the rule of thumb and the configured minimum.
- */
 export function computeLifts(project: Project): LiftsResult {
-  const cfg = project.lifts;
-  const std = DUBAI_STANDARDS.lifts;
   const tById = new Map(project.typologies.map((t) => [t.id, t]));
 
   const floors = Array.from({ length: project.numFloors }, (_, i) => i + 1);
@@ -84,90 +256,44 @@ export function computeLifts(project: Project): LiftsResult {
   const totalUnits = byFloor.reduce((s, f) => s + f.units, 0);
   const totalPopulation = byFloor.reduce((s, f) => s + f.population, 0);
 
-  const demandStandard = Math.ceil(totalPopulation * cfg.handlingPctStandard);
-  const demandPremium = Math.ceil(totalPopulation * cfg.handlingPctPremium);
+  const basementCount = project.basements?.count ?? 0;
+  const groundCount = project.ground?.count ?? 1;
+  const podiumCount = project.podium?.count ?? 0;
+  // D.8.8 "occupied floors" = every floor the lifts serve ABOVE ground level:
+  // ground + podium + tower type floors. Counting only the tower under-read
+  // the D.13 row on podium buildings and returned too few lifts.
+  const occupiedFloors = Math.max(1, project.numFloors + groundCount + podiumCount);
+  const defaultBoardingFloors = basementCount + groundCount + podiumCount;
+  const boardingFloors = project.dbcBoardingFloors ?? Math.max(1, defaultBoardingFloors);
 
-  const ratedPersons = Math.floor(cfg.cabinKg / std.weightPerPerson);
-  const P = Math.floor(ratedPersons * std.capacityFactor);
-  const N = Math.max(1, project.numFloors);
-  const df = Math.max(0, project.floorHeight);
-  const speed = cfg.speed > 0 ? cfg.speed : 1;
-  const ts = Math.max(0, cfg.timePerStop);
-  const tp = cfg.passengerTransferS ?? DEFAULT_TRANSFER_S;
-  const targetIntervalS = cfg.targetIntervalS && cfg.targetIntervalS > 0 ? cfg.targetIntervalS : DEFAULT_INTERVAL_S;
+  const dbc = dbcResidentialLifts({
+    population: Math.round(totalPopulation),
+    occupiedFloors,
+    boardingFloors,
+  });
 
-  const totalTravelHeight = N * df;
-  const tv = df / speed;
-  const S = P > 0 ? N * (1 - Math.pow(1 - 1 / N, P)) : 0;
-  let sumReversal = 0;
-  for (let i = 1; i < N; i++) sumReversal += Math.pow(i / N, P);
-  const H = P > 0 ? N - sumReversal : 0;
-  const rtt = P > 0 ? 2 * H * tv + (S + 1) * ts + 2 * P * tp : 0;
-
-  const tripsPer5Min = rtt > 0 ? std.handlingWindowSec / rtt : 0;
-  const capacityPerLift = Math.floor(tripsPer5Min * P);
-
-  const liftsCIBSEStandard = capacityPerLift > 0 ? Math.ceil(demandStandard / capacityPerLift) : 0;
-  const liftsCIBSEPremium = capacityPerLift > 0 ? Math.ceil(demandPremium / capacityPerLift) : 0;
-  const liftsForInterval = totalUnits > 0 && rtt > 0 ? Math.ceil(rtt / targetIntervalS) : 0;
-  const liftsCIBSE = Math.max(liftsCIBSEStandard, liftsCIBSEPremium, liftsForInterval);
-
-  const ruleOfThumbLifts = cfg.unitsPerLiftRule > 0 ? Math.ceil(totalUnits / cfg.unitsPerLiftRule) : 0;
-  const dcdMinLifts = totalUnits > 0 && totalUnits >= cfg.dcdMinUnitsThreshold ? cfg.dcdMinLifts : 0;
-  const liftsPractical = Math.max(ruleOfThumbLifts, dcdMinLifts);
-  const liftsRecommended = Math.max(liftsCIBSE, liftsPractical);
-
-  const pct = (x: number) => `${roundTo(x * 100, 1)}%`;
-  let governing: string;
-  if (liftsRecommended === 0) {
-    governing = "No units in the program";
-  } else if (liftsPractical > liftsCIBSE) {
-    governing =
-      liftsPractical === ruleOfThumbLifts
-        ? `Rule of thumb (1 per ${cfg.unitsPerLiftRule} units)`
-        : `Minimum ${cfg.dcdMinLifts} lifts (≥ ${cfg.dcdMinUnitsThreshold} units)`;
-  } else if (liftsForInterval >= Math.max(liftsCIBSEStandard, liftsCIBSEPremium)) {
-    governing = `CIBSE interval ≤ ${targetIntervalS} s`;
-  } else {
-    governing =
-      liftsCIBSEPremium >= liftsCIBSEStandard
-        ? `CIBSE handling ${pct(cfg.handlingPctPremium)}`
-        : `CIBSE handling ${pct(cfg.handlingPctStandard)}`;
-  }
-
-  const intervalAchievedS = liftsRecommended > 0 ? rtt / liftsRecommended : 0;
-  const handlingAchievedPct =
-    totalPopulation > 0 && rtt > 0 ? (liftsRecommended * std.handlingWindowSec * P) / rtt / totalPopulation : 0;
+  const liftsRecommended = dbc.total ?? 0;
+  const governing =
+    dbc.total === null
+      ? "Out of D.8.8 chart — VT Consultant required (D.9 method 2)"
+      : "Dubai Building Code D.8.8";
 
   return {
     byFloor,
     totalUnits,
     totalPopulation,
-    demandStandard,
-    demandPremium,
-    ratedPersons,
-    personsPerTrip: P,
-    floorsServed: N,
-    totalTravelHeight,
-    interfloorTimeS: tv,
-    probableStops: S,
-    highestReversalFloor: H,
-    timePerStopS: ts,
-    passengerTransferS: tp,
-    rttSeconds: rtt,
-    tripsPer5Min,
-    capacityPerLift,
-    liftsCIBSEStandard,
-    liftsCIBSEPremium,
-    targetIntervalS,
-    liftsForInterval,
-    liftsCIBSE,
-    ruleOfThumbLifts,
-    dcdMinLifts,
-    liftsPractical,
+    occupiedFloors,
+    boardingFloors,
+    dbcFromPopulation: dbc.fromPopulation,
+    dbcFromBoarding: dbc.fromBoarding,
+    dbcTotal: dbc.total,
+    dbcOutOfChart: dbc.outOfChart,
+    dbcBeyondChart: dbc.beyondChart,
     liftsRecommended,
-    intervalAchievedS,
-    handlingAchievedPct,
     governing,
+    passengerMin: minPassengerLiftSpec(occupiedFloors, false),
+    passengerRecommended: minPassengerLiftSpec(occupiedFloors, true),
+    serviceMin: minServiceLiftSpec(false),
+    serviceRecommended: minServiceLiftSpec(true),
   };
 }

@@ -1,20 +1,71 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore, useProject } from "@/lib/store";
 import { DUBAI_ZONES } from "@/lib/standards/dubai";
-import { computeProgram } from "@/lib/calc/program";
-import { parseCoordinates } from "@/lib/geo-parse";
-import { fmt0, fmtPct, fmtSqft } from "@/lib/format";
-import NumInput from "./num-input";
+import {
+  type FloorSection,
+  type GfaBreakdown,
+  type GfaBreakdownItem,
+  type GfaUseCategory,
+} from "@/lib/types";
+import { useZoneLibrary } from "@/lib/use-zone-library";
+import {
+  ALL_CLASS_LETTERS,
+  TYPOLOGY_KEYS,
+  TYPOLOGY_LABELS,
+  allZoneNames,
+  classForZone,
+  type ZoneClass,
+  type TypologyKey,
+} from "@/lib/zone-classes";
+
+interface FloorSectionDef {
+  key: "basements" | "ground" | "podium" | "typeFloors";
+  label: string;
+  defaultCount: number;
+  defaultHeight: number;
+  hint: string;
+}
+
+const FLOOR_SECTIONS: FloorSectionDef[] = [
+  { key: "basements", label: "Basements", defaultCount: 0, defaultHeight: 3.0, hint: "Below ground — usually parking, MEP." },
+  { key: "ground", label: "Ground floor", defaultCount: 1, defaultHeight: 4.5, hint: "Lobby, retail, drop-off." },
+  { key: "podium", label: "Podium", defaultCount: 0, defaultHeight: 4.0, hint: "Amenities, parking, retail above ground." },
+  { key: "typeFloors", label: "Type floors", defaultCount: 8, defaultHeight: 3.2, hint: "Residential typical floors — drive the Program matrix." },
+];
+
+const M2_TO_SQFT = 10.7639;
+
+function fmtSqft(m2: number): string {
+  if (!Number.isFinite(m2) || m2 === 0) return "—";
+  const sqft = m2 * M2_TO_SQFT;
+  return `${Math.round(sqft).toLocaleString("en-US")} sqft`;
+}
+
+const GFA_CATEGORIES: { key: GfaUseCategory; label: string; hint: string }[] = [
+  { key: "residential", label: "Residential", hint: "Apartments, villas, serviced apartments." },
+  { key: "retail", label: "Retail", hint: "Shops, supermarkets, F&B." },
+  { key: "commercial", label: "Commercial / Office", hint: "Offices, co-working, clinics." },
+  { key: "hospitality", label: "Hospitality", hint: "Hotel keys, branded residence. Counted as Residential — feeds Distribution, unit mix and Apartments." },
+];
 
 export default function SetupTab() {
   const project = useProject();
   const patch = useStore((s) => s.patch);
-  const program = computeProgram(project);
+  const { library } = useZoneLibrary();
 
-  const permitted = project.targetGFA ?? 0;
-  const height = project.numFloors * project.floorHeight;
-  const impliedFar = permitted > 0 && project.plotArea > 0 ? permitted / project.plotArea : 0;
+  // Union of legacy DUBAI_ZONES + every zone known to the class library, dedup.
+  const zoneOptions = useMemo(() => {
+    const set = new Set<string>([...DUBAI_ZONES, ...allZoneNames(library)]);
+    const arr = Array.from(set);
+    arr.sort((a, b) => a.localeCompare(b));
+    return arr;
+  }, [library]);
+
+  const detectedClass: ZoneClass | null = useMemo(
+    () => classForZone(project.zone, library),
+    [project.zone, library],
+  );
 
   return (
     <div className="grid gap-6">
@@ -27,224 +78,467 @@ export default function SetupTab() {
           <Field label="Project name">
             <input className="cell-input" value={project.name} onChange={(e) => patch({ name: e.target.value })} />
           </Field>
-          <Field label="Plot number">
-            <input
-              className="cell-input"
-              value={project.plotNumber ?? ""}
-              placeholder="As on the affection plan"
-              onChange={(e) => patch({ plotNumber: e.target.value || undefined })}
-            />
+          <Field label="Zone (Dubai / Abu Dhabi)" hint={detectedClass ? `Class ${detectedClass} · ${library[detectedClass].name}` : "Unknown class"}>
+            <select className="cell-input" value={project.zone} onChange={(e) => patch({ zone: e.target.value })}>
+              {zoneOptions.map((z) => <option key={z}>{z}</option>)}
+            </select>
           </Field>
-          <Field label="Area / community">
-            <input
-              className="cell-input"
-              list="dubai-zones"
-              value={project.zone}
-              placeholder="e.g. Jumeirah Village Circle (JVC)"
-              onChange={(e) => patch({ zone: e.target.value })}
-            />
-            <datalist id="dubai-zones">
-              {DUBAI_ZONES.map((z) => <option key={z} value={z} />)}
-            </datalist>
+          <Field label="Plot area (m²)" hint={`≈ ${fmtSqft(project.plotArea)}`}>
+            <NumInput value={project.plotArea} onChange={(v) => patch({ plotArea: v })} />
           </Field>
-          <Field label="Plot area (m²)" hint={project.plotArea > 0 ? fmtSqft(project.plotArea) : undefined}>
-            <NumInput value={project.plotArea} min={0} step={10} onChange={(v) => patch({ plotArea: v })} />
-          </Field>
-          <Field label="Residential floors">
-            <NumInput value={project.numFloors} integer min={1} max={200} onChange={(v) => patch({ numFloors: v })} />
-          </Field>
-          <Field label="Floor-to-floor height (m)">
-            <NumInput value={project.floorHeight} min={0} step={0.1} onChange={(v) => patch({ floorHeight: v })} />
-          </Field>
-          <Field label="Approx. shafts per unit (m²)" hint="Deducted from GFA">
-            <NumInput value={project.shaftPerUnit} min={0} step={0.1} onChange={(v) => patch({ shaftPerUnit: v })} />
-          </Field>
-          <Field label="Accessible (PRM) parking" hint="Share of required spaces">
-            <NumInput value={project.prmPercent * 100} min={0} max={100} step={0.5} suffix="%" onChange={(v) => patch({ prmPercent: v / 100 })} />
-          </Field>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="mb-5">
-          <h2 className="section-title">Planning constraints</h2>
-          <p className="section-sub">
-            Limits from the affection plan / plot guidelines. Leave empty if not known — each one adds a pass / fail
-            check to Results and ranks the massing variants.
-          </p>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-5">
-          <Field label="Permitted GFA (m²)" hint={permitted > 0 ? `${fmtSqft(permitted)}${impliedFar ? ` · FAR ${impliedFar.toFixed(2)}` : ""}` : "Also the 100 % reference of Common Areas in % mode"}>
+          <Field label="Target GFA (m²)" hint={`≈ ${fmtSqft(project.targetGFA ?? 0)}`}>
             <NumInput
-              value={project.targetGFA}
-              min={0}
+              value={project.targetGFA ?? 0}
               step={10}
-              placeholder="—"
               onChange={(v) => patch({ targetGFA: v > 0 ? v : undefined })}
-              onClear={() => patch({ targetGFA: undefined })}
-            />
-          </Field>
-          <Field label="Max FAR">
-            <NumInput
-              value={project.maxFAR}
-              min={0}
-              step={0.05}
-              placeholder="—"
-              onChange={(v) => patch({ maxFAR: v > 0 ? v : undefined })}
-              onClear={() => patch({ maxFAR: undefined })}
-            />
-          </Field>
-          <Field label="Max height (m)">
-            <NumInput
-              value={project.maxHeightM}
-              min={0}
-              step={1}
-              placeholder="—"
-              onChange={(v) => patch({ maxHeightM: v > 0 ? v : undefined })}
-              onClear={() => patch({ maxHeightM: undefined })}
             />
           </Field>
         </div>
-        <div className="mt-4 grid sm:grid-cols-3 gap-3 text-[12px]">
-          <Status
-            label="Design GFA"
-            value={`${fmt0(program.totalGFABuilding)} m²`}
-            state={permitted > 0 ? (program.totalGFABuilding <= permitted + 0.5 ? "ok" : "bad") : undefined}
-            note={permitted > 0 ? `${fmtPct(program.totalGFABuilding / permitted)} of permitted` : "No limit set"}
-          />
-          <Status
-            label="FAR"
-            value={program.far.toFixed(2)}
-            state={project.maxFAR ? (program.far <= project.maxFAR + 1e-6 ? "ok" : "bad") : undefined}
-            note={project.maxFAR ? `max ${project.maxFAR}` : "No limit set"}
-          />
-          <Status
-            label="Residential stack height"
-            value={`${height.toFixed(1)} m`}
-            state={project.maxHeightM ? (height <= project.maxHeightM + 1e-6 ? "ok" : "bad") : undefined}
-            note={project.maxHeightM ? `max ${project.maxHeightM} m` : `${project.numFloors} × ${project.floorHeight} m`}
-          />
-        </div>
+        <p className="text-[11px] text-ink-500 mt-3">
+          Target GFA powers the percentage input mode in Common Areas (leave 0 if you prefer m²).
+        </p>
       </div>
 
-      <LocationCard />
+      {detectedClass && (
+        <DetectedClassCard letter={detectedClass} library={library} />
+      )}
 
-      <div className="card">
-        <div className="mb-5">
-          <h2 className="section-title">Notes</h2>
-          <p className="section-sub">Free-form observations, issues, conclusions. Printed in Results and exported to Excel.</p>
+      <FloorBreakdownCard project={project} patch={patch} />
+
+      <GfaBreakdownCard project={project} patch={patch} />
+    </div>
+  );
+}
+
+function DetectedClassCard({
+  letter,
+  library,
+}: {
+  letter: ZoneClass;
+  library: ReturnType<typeof useZoneLibrary>["library"];
+}) {
+  const row = library[letter];
+  // Natural typology order so Studio is shown first.
+  const mixEntries = TYPOLOGY_KEYS
+    .map((k) => ({ key: k, pct: row.typologyMix[k] }))
+    .filter((m) => m.pct > 0.001);
+  const summary = mixEntries
+    .map((m) => `${(m.pct * 100).toFixed(0)}% ${TYPOLOGY_LABELS[m.key]}`)
+    .join(" · ");
+  return (
+    <div className="card bg-brand-50 border-brand-200">
+      <div className="flex items-start gap-4 flex-wrap">
+        <div className="text-[42px] font-light text-brand-700 tabular-nums leading-none">{letter}</div>
+        <div className="flex-1 min-w-[280px]">
+          <div className="eyebrow text-brand-800 text-[10px]">Detected class</div>
+          <div className="text-[16px] font-medium text-ink-900 mt-0.5">{row.name}</div>
+          <p className="text-[12px] text-ink-700 leading-snug mt-1">{row.description}</p>
+          <div className="mt-3">
+            <div className="eyebrow text-ink-500 text-[10px]">Recommended unit mix</div>
+            <div className="text-[12.5px] text-ink-900 tabular-nums mt-1">{summary}</div>
+            <div className="text-[10.5px] text-ink-500 mt-1.5">
+              You can apply this mix in <strong>Typologies</strong> · floor heights in this
+              class: ground {row.floorHeights.ground} m, podium {row.floorHeights.podium} m,
+              typical {row.floorHeights.typical} m · parking {row.parkingAreaPerCarSqft} sqft/car.
+            </div>
+          </div>
         </div>
-        <textarea
-          className="cell-input min-h-[140px] leading-relaxed"
-          rows={6}
-          value={project.notes}
-          onChange={(e) => patch({ notes: e.target.value })}
-          placeholder="e.g. Travel distance exceeds 61 m max — relocate parking layout..."
-        />
       </div>
     </div>
   );
 }
 
-function LocationCard() {
-  const project = useProject();
-  const patch = useStore((s) => s.patch);
-  const [paste, setPaste] = useState("");
-  const [pasteError, setPasteError] = useState<string | null>(null);
-
-  function applyPaste(text: string) {
-    setPaste(text);
-    if (!text.trim()) {
-      setPasteError(null);
-      return;
+function FloorBreakdownCard({
+  project,
+  patch,
+}: {
+  project: ReturnType<typeof useProject>;
+  patch: (p: Partial<ReturnType<typeof useProject>>) => void;
+}) {
+  function get(key: FloorSectionDef["key"], def: FloorSectionDef): FloorSection {
+    const stored = project[key] as FloorSection | undefined;
+    if (stored) return stored;
+    // Defaults — for typeFloors fall back to the legacy fields so old projects
+    // keep their values.
+    if (key === "typeFloors") {
+      return { count: project.numFloors || def.defaultCount, heightM: project.floorHeight || def.defaultHeight };
     }
-    const c = parseCoordinates(text);
-    if (!c) {
-      setPasteError("Couldn't read a location — paste \"25.19, 55.27\" or a Google Maps link.");
-      return;
-    }
-    setPasteError(null);
-    patch({ latitude: Number(c.lat.toFixed(6)), longitude: Number(c.lng.toFixed(6)) });
+    return { count: def.defaultCount, heightM: def.defaultHeight };
   }
 
-  const hasGeo = !!project.latitude && !!project.longitude;
-  const mapsUrl = hasGeo ? `https://www.google.com/maps/search/?api=1&query=${project.latitude},${project.longitude}` : null;
+  function setSection(key: FloorSectionDef["key"], partial: Partial<FloorSection>) {
+    const def = FLOOR_SECTIONS.find((s) => s.key === key)!;
+    const cur = get(key, def);
+    const next: FloorSection = {
+      count: Math.max(0, Math.round(partial.count ?? cur.count)),
+      heightM: Math.max(0, partial.heightM ?? cur.heightM),
+    };
+    const updates: Partial<typeof project> = { [key]: next };
+    // Keep legacy fields in sync — typeFloors drives numFloors / floorHeight so
+    // the Program matrix and downstream calcs keep working.
+    if (key === "typeFloors") {
+      updates.numFloors = Math.max(1, next.count);
+      updates.floorHeight = next.heightM > 0 ? next.heightM : project.floorHeight;
+    }
+    patch(updates);
+  }
+
+  // Type floors count is DERIVED in Distribution (residential GFA ÷ the tower
+  // floor-plate area entered there), not typed in here. This card just
+  // displays the current value; the height stays a manual input.
+  const typeFloorsSec = get("typeFloors", FLOOR_SECTIONS[3]);
+
+  function setTypeFloorsHeight(heightM: number) {
+    setSection("typeFloors", { count: typeFloorsSec.count, heightM });
+  }
+
+  const nonTowerSections = FLOOR_SECTIONS.filter((s) => s.key !== "basements" && s.key !== "typeFloors");
+  const totalAboveGround = nonTowerSections.reduce((sum, s) => sum + get(s.key, s).count, 0) + typeFloorsSec.count;
+  const totalHeightAbove =
+    nonTowerSections.reduce((sum, s) => {
+      const sec = get(s.key, s);
+      return sum + sec.count * sec.heightM;
+    }, 0) + typeFloorsSec.count * typeFloorsSec.heightM;
+  const basementSec = get("basements", FLOOR_SECTIONS[0]);
 
   return (
     <div className="card">
       <div className="mb-5">
-        <h2 className="section-title">Location</h2>
+        <h2 className="section-title">Floor breakdown</h2>
         <p className="section-sub">
-          Unlocks the in-context 3D view (satellite basemap + neighbouring buildings) and the sun &amp; views analyses.
+          Tell the app how the building is stratified. Basements, ground and podium are your
+          call. Type floors are derived in <strong>Distribution</strong> — residential GFA ÷ the
+          tower floor-plate area entered there decides how many fit.
         </p>
       </div>
-      <div className="grid gap-5">
-        <Field label="Paste coordinates or a Google Maps link">
-          <input
-            className="cell-input"
-            value={paste}
-            placeholder={`25.0307, 55.1873  ·  https://maps.google.com/…  ·  25°01'50.5"N 55°11'14.3"E`}
-            onChange={(e) => applyPaste(e.target.value)}
-          />
-          {pasteError && <span className="text-[11px] text-red-700">{pasteError}</span>}
-        </Field>
-        <div className="grid sm:grid-cols-3 gap-5">
-          <Field label="Latitude">
-            <NumInput
-              value={project.latitude}
-              min={-90}
-              max={90}
-              step={0.0001}
-              placeholder="—"
-              onChange={(v) => patch({ latitude: v !== 0 ? v : undefined })}
-              onClear={() => patch({ latitude: undefined })}
-            />
-          </Field>
-          <Field label="Longitude">
-            <NumInput
-              value={project.longitude}
-              min={-180}
-              max={180}
-              step={0.0001}
-              placeholder="—"
-              onChange={(v) => patch({ longitude: v !== 0 ? v : undefined })}
-              onClear={() => patch({ longitude: undefined })}
-            />
-          </Field>
-          <Field label="North heading (° clockwise of plot +Y)" hint="0 when the drawing is north-up">
-            <NumInput value={project.northHeadingDeg ?? 0} min={-360} max={360} step={1} onChange={(v) => patch({ northHeadingDeg: v })} />
-          </Field>
+
+      <div className="border border-ink-200">
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+          <div>Section</div>
+          <div className="text-right">Floors</div>
+          <div className="text-right">Height (m)</div>
+          <div className="text-right">Total height</div>
         </div>
-        {mapsUrl && (
-          <a href={mapsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-brand-700 hover:text-brand-900 underline justify-self-start">
-            Check the location on Google Maps ↗
-          </a>
-        )}
+        {nonTowerSections.map((def) => {
+          const sec = get(def.key, def);
+          const totalH = sec.count * sec.heightM;
+          return (
+            <div
+              key={def.key}
+              className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
+            >
+              <div>
+                <div className="text-ink-900">{def.label}</div>
+                <div className="text-[10.5px] text-ink-500 leading-snug">{def.hint}</div>
+              </div>
+              <input
+                type="number"
+                step={1}
+                min={0}
+                className="cell-input text-right"
+                value={sec.count}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  setSection(def.key, { count: Number.isFinite(n) ? n : 0 });
+                }}
+              />
+              <input
+                type="number"
+                step={0.1}
+                min={0}
+                className="cell-input text-right"
+                value={Number(sec.heightM.toFixed(2))}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  setSection(def.key, { heightM: Number.isFinite(n) ? n : 0 });
+                }}
+              />
+              <div className="text-right text-ink-900">
+                {totalH > 0 ? `${totalH.toFixed(1)} m` : "—"}
+              </div>
+            </div>
+          );
+        })}
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums border-b border-ink-100 bg-brand-50/40">
+          <div>
+            <div className="text-ink-900">Type floors <span className="text-brand-700">· derived</span></div>
+            <div className="text-[10.5px] text-ink-500 leading-snug">
+              Set the tower floor-plate area in <strong>Distribution</strong> to compute this.
+            </div>
+          </div>
+          <div className="text-right text-ink-900 font-medium">{typeFloorsSec.count}</div>
+          <input
+            type="number"
+            step={0.1}
+            min={0}
+            className="cell-input text-right"
+            value={Number(typeFloorsSec.heightM.toFixed(2))}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              setTypeFloorsHeight(Number.isFinite(n) ? n : 0);
+            }}
+          />
+          <div className="text-right text-ink-900">
+            {typeFloorsSec.count * typeFloorsSec.heightM > 0
+              ? `${(typeFloorsSec.count * typeFloorsSec.heightM).toFixed(1)} m`
+              : "—"}
+          </div>
+        </div>
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums bg-brand-50 font-medium">
+          <div className="uppercase tracking-[0.08em] text-[10.5px] text-brand-800">
+            Above ground (visible building)
+          </div>
+          <div className="text-right text-brand-800">{totalAboveGround}</div>
+          <div></div>
+          <div className="text-right text-brand-800">{totalHeightAbove.toFixed(1)} m</div>
+        </div>
       </div>
+      <p className="text-[11px] text-ink-500 mt-3 leading-snug">
+        {basementSec.count > 0
+          ? `Plus ${basementSec.count} basement level(s) — ${(basementSec.count * basementSec.heightM).toFixed(1)} m below ground.`
+          : "No basements configured."}
+      </p>
     </div>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function GfaBreakdownCard({
+  project,
+  patch,
+}: {
+  project: ReturnType<typeof useProject>;
+  patch: (p: Partial<ReturnType<typeof useProject>>) => void;
+}) {
+  const total = project.targetGFA ?? 0;
+  const breakdown: GfaBreakdown = project.gfaBreakdown ?? {};
+
+  function getItem(key: GfaUseCategory): GfaBreakdownItem {
+    return breakdown[key] ?? { mode: "absolute", value: 0 };
+  }
+
+  function setItem(key: GfaUseCategory, partial: Partial<GfaBreakdownItem>) {
+    const next: GfaBreakdown = { ...breakdown };
+    const cur = getItem(key);
+    next[key] = { ...cur, ...partial };
+    patch({ gfaBreakdown: next });
+  }
+
+  function toggleMode(key: GfaUseCategory) {
+    const cur = getItem(key);
+    if (cur.mode === "absolute") {
+      // m² → % (only meaningful when there is a total)
+      const pct = total > 0 ? (cur.value / total) * 100 : 0;
+      setItem(key, { mode: "percent", value: Number(pct.toFixed(2)) });
+    } else {
+      const m2 = (cur.value / 100) * total;
+      setItem(key, { mode: "absolute", value: Number(m2.toFixed(2)) });
+    }
+  }
+
+  function effectiveM2(key: GfaUseCategory): number {
+    const item = getItem(key);
+    return item.mode === "absolute" ? item.value : (item.value / 100) * total;
+  }
+
+  function effectivePct(key: GfaUseCategory): number {
+    const item = getItem(key);
+    if (item.mode === "percent") return item.value;
+    return total > 0 ? (item.value / total) * 100 : 0;
+  }
+
+  function gfaFor(key: GfaUseCategory): number {
+    return effectiveM2(key);
+  }
+
+  const sumGFA = GFA_CATEGORIES.reduce((s, c) => s + gfaFor(c.key), 0);
+  const sumPctGFA = total > 0 ? (sumGFA / total) * 100 : 0;
+  const gfaMismatch = total > 0 ? Math.abs(sumGFA - total) : 0;
+  const gfaMismatchPct = total > 0 ? gfaMismatch / total : 0;
+
+  function rebalanceTo100() {
+    if (total <= 0) return;
+    if (sumGFA <= 0) return;
+    const factor = total / sumGFA;
+    const next: GfaBreakdown = {};
+    for (const c of GFA_CATEGORIES) {
+      const m2 = effectiveM2(c.key);
+      if (m2 <= 0) continue;
+      next[c.key] = { mode: "absolute", value: Number((m2 * factor).toFixed(2)) };
+    }
+    patch({ gfaBreakdown: next });
+  }
+
   return (
-    <label className="grid gap-2 content-start">
+    <div className="card">
+      <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="section-title">GFA breakdown</h2>
+          <p className="section-sub">
+            Split the Target GFA across uses. Each row can be entered either as an absolute
+            value in m² or as a percentage of the total — the other one is computed.
+          </p>
+        </div>
+        {total > 0 && (
+          <div className="flex items-center gap-3">
+            <div className="text-[11px] text-ink-500">
+              Reference Target GFA:{" "}
+              <strong className="text-ink-900 tabular-nums">
+                {total.toLocaleString("en-US")} m² · {fmtSqft(total)}
+              </strong>
+            </div>
+            {gfaMismatchPct > 0.005 && sumGFA > 0 && (
+              <button
+                onClick={rebalanceTo100}
+                className="text-[10.5px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+                title="Scale every row proportionally so the sum equals Target GFA"
+              >
+                Rebalance to 100%
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {total <= 0 && (
+        <div className="border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[12.5px] mb-4 leading-snug">
+          Set a <strong>Target GFA</strong> above to enable the percentage input mode.
+          You can still enter absolute m² per use without it.
+        </div>
+      )}
+
+      <div className="border border-ink-200">
+        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+          <div>Use</div>
+          <div className="text-right">Input</div>
+          <div className="text-center">Mode</div>
+          <div className="text-right">GFA m²</div>
+          <div className="text-right">≈ sqft (GFA)</div>
+          <div className="text-right">% of GFA</div>
+        </div>
+        {GFA_CATEGORIES.map((c) => {
+          const item = getItem(c.key);
+          const m2 = effectiveM2(c.key);
+          const pct = effectivePct(c.key);
+          return (
+            <div key={c.key}>
+              <div
+                className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-1.5 items-center text-[12px] tabular-nums border-b border-ink-100"
+              >
+                <div>
+                  <div className="text-ink-900">{c.label}</div>
+                  <div className="text-[10.5px] text-ink-500 leading-snug">{c.hint}</div>
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step={item.mode === "absolute" ? 10 : 0.5}
+                    min={0}
+                    className="cell-input text-right pr-7"
+                    value={item.value || 0}
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      setItem(c.key, { value: Number.isFinite(n) && n >= 0 ? n : 0 });
+                    }}
+                  />
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10.5px] text-ink-400 pointer-events-none">
+                    {item.mode === "absolute" ? "m²" : "%"}
+                  </span>
+                </div>
+                <div className="text-center">
+                  <button
+                    onClick={() => toggleMode(c.key)}
+                    disabled={total <= 0 && item.mode === "absolute"}
+                    title={total <= 0 ? "Set Target GFA to enable percent mode" : "Switch input mode"}
+                    className="px-2 py-0.5 text-[10px] uppercase tracking-[0.10em] border border-ink-300 text-ink-700 hover:bg-bone-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    → {item.mode === "absolute" ? "%" : "m²"}
+                  </button>
+                </div>
+                {(() => {
+                  const gfa = gfaFor(c.key);
+                  const gfaPct = total > 0 ? (gfa / total) * 100 : 0;
+                  return (
+                    <>
+                      <div className="text-right text-brand-800 font-medium">{gfa > 0 ? Math.round(gfa).toLocaleString("en-US") : "—"}</div>
+                      <div className="text-right text-ink-500">{fmtSqft(gfa)}</div>
+                      <div className="text-right text-ink-700">{gfaPct > 0 ? `${gfaPct.toFixed(1)}%` : "—"}</div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          );
+        })}
+        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums bg-brand-50 font-medium">
+          <div className="uppercase tracking-[0.08em] text-[10.5px] text-brand-800">Total of uses</div>
+          <div></div>
+          <div></div>
+          <div className="text-right text-brand-800">{Math.round(sumGFA).toLocaleString("en-US")}</div>
+          <div className="text-right text-brand-700">{fmtSqft(sumGFA)}</div>
+          <div className="text-right text-brand-800">{total > 0 ? `${sumPctGFA.toFixed(1)}%` : "—"}</div>
+        </div>
+      </div>
+
+      {total > 0 && gfaMismatchPct > 0.005 && sumGFA > 0 && (
+        <p className="text-[11.5px] mt-3 leading-snug text-amber-900">
+          Σ GFA across uses = <strong>{Math.round(sumGFA).toLocaleString("en-US")} m²</strong>{" "}
+          ({sumPctGFA.toFixed(1)}%) but Target GFA is{" "}
+          <strong>{total.toLocaleString("en-US")} m²</strong>. Adjust the rows or click
+          <em> Rebalance to 100%</em> above.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  return (
+    <label className="grid gap-2">
       <span className="eyebrow">{label}</span>
       {children}
-      {hint && <span className="text-[11px] text-ink-500 -mt-1">{hint}</span>}
+      {hint && <span className="text-[10.5px] text-ink-500 tabular-nums">{hint}</span>}
     </label>
   );
 }
 
-function Status({ label, value, note, state }: { label: string; value: string; note: string; state?: "ok" | "bad" }) {
-  const tone = state === "ok" ? "text-emerald-700" : state === "bad" ? "text-red-700" : "text-ink-900";
+function NumInput({ value, onChange, step = 1, suffix }: { value: number; onChange: (v: number) => void; step?: number; suffix?: string }) {
+  const [text, setText] = useState<string>(Number.isFinite(value) ? String(value) : "0");
+  // Sync external value into internal text when it changes from outside
+  useEffect(() => {
+    const parsed = parseFloat(text);
+    if (Number.isFinite(value) && (!Number.isFinite(parsed) || parsed !== value)) {
+      setText(String(value));
+    }
+  }, [value]);  // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <div className="border border-ink-200 bg-bone-50 px-3 py-2.5 grid gap-0.5">
-      <span className="text-[10.5px] uppercase tracking-[0.12em] text-ink-500">{label}</span>
-      <span className={`text-[15px] font-medium tabular-nums ${tone}`}>
-        {value}
-        {state && <span className="ml-2 text-[10.5px] uppercase tracking-[0.1em]">{state === "ok" ? "✓ within" : "✗ over"}</span>}
-      </span>
-      <span className="text-ink-500">{note}</span>
+    <div className="relative">
+      <input
+        type="text"
+        inputMode="decimal"
+        className="cell-input pr-9"
+        value={text}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setText(raw);
+          // Allow empty string or a lone '-' / '.' as intermediate typing states.
+          if (raw === "" || raw === "-" || raw === "." || raw === "-.") return;
+          const n = parseFloat(raw);
+          if (Number.isFinite(n)) onChange(n);
+        }}
+        onBlur={() => {
+          const n = parseFloat(text);
+          if (!Number.isFinite(n)) {
+            setText(String(value));
+          } else {
+            // Re-normalise the displayed text to the parsed number
+            setText(String(n));
+            onChange(n);
+          }
+        }}
+        step={step}
+      />
+      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-400">{suffix}</span>}
     </div>
   );
 }
+

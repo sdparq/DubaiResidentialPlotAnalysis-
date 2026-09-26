@@ -14,7 +14,6 @@ const config: Config = {
           900: "#0e0e0e",
           800: "#1a1a1a",
           700: "#2a2a2a",
-          600: "#4a4a4a",
           500: "#6b6b6b",
           400: "#8a8a8a",
           300: "#b8b5ad",
@@ -26,7 +25,6 @@ const config: Config = {
           50: "#fbfaf6",
           100: "#f6f4ee",
           200: "#ede9df",
-          300: "#d9d3c4",
         },
         brand: {
           50: "#f1f4ee",

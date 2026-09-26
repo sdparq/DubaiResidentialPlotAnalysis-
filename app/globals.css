@@ -15,9 +15,9 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 input[type="number"] { -moz-appearance: textfield; }
 
 /*
- * Component classes live in the components layer so Tailwind utilities (text-emerald-700,
- * text-right…) placed on the same element always win. Table cell rules use :where() to keep
- * their specificity below a single utility class for the same reason.
+ * Component classes live in the components layer so Tailwind utilities placed on the
+ * same element (bg-brand-50, text-red-700…) win, as the markup intends. Table cell
+ * rules use :where() to stay below a single utility class for the same reason.
  */
 @layer components {
   /* ---------- form controls ---------- */
@@ -55,7 +55,7 @@ input[type="number"] { -moz-appearance: textfield; }
 
   /* ---------- cards & layout ---------- */
   .card {
-    /* min-w-0: grid items must be allowed to shrink so wide tables scroll inside .tbl-scroll */
+    /* min-w-0: grid items must be allowed to shrink to the screen width */
     @apply bg-white border border-ink-200 p-4 sm:p-6 min-w-0;
     border-radius: 2px;
   }
@@ -64,7 +64,7 @@ input[type="number"] { -moz-appearance: textfield; }
     border-radius: 2px;
   }
   .kpi-label { @apply text-[10.5px] uppercase tracking-[0.18em] text-ink-500 font-medium; }
-  .kpi-value { @apply text-xl sm:text-2xl font-medium text-ink-900 tabular-nums; }
+  .kpi-value { @apply text-2xl font-medium text-ink-900 tabular-nums; }
   .kpi-sub { @apply text-xs text-ink-500; }
 
   .section-title {
@@ -75,9 +75,6 @@ input[type="number"] { -moz-appearance: textfield; }
   .section-rule { @apply h-px bg-ink-200 my-4; }
 
   /* ---------- tables ---------- */
-  /* Wide tables scroll sideways inside their card on small screens instead of being clipped. */
-  .tbl-scroll { @apply w-full overflow-x-auto; -webkit-overflow-scrolling: touch; }
-  .tbl-scroll > table.tbl { min-width: var(--tbl-min, 640px); }
   .tbl { @apply w-full text-sm border-collapse; }
   :where(.tbl) th {
     @apply text-left font-medium text-ink-500 uppercase
@@ -116,10 +113,55 @@ input[type="number"] { -moz-appearance: textfield; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
-/* ---------- print (Results → Print / PDF) ---------- */
+/* Phones: wide tables and fixed-column grids scroll sideways inside their card
+   instead of being cut off by the screen edge. */
+@media (max-width: 767px) {
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+/* ---------- PDF report (print) ---------- */
+@page {
+  size: A4;
+  margin: 12mm 12mm 14mm;
+}
 @media print {
-  @page { size: A4; margin: 14mm; }
-  html, body { background: #fff !important; height: auto; }
-  .card, .kpi { break-inside: avoid; box-shadow: none; }
-  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* The report overlay is PORTALED to <body>, so hiding every other body
+     child removes the whole app (and its page-height) from the print flow —
+     the printed document is exactly the report, nothing more. */
+  body.report-open > *:not(.report-overlay) {
+    display: none !important;
+  }
+  body.report-open .report-overlay {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: none !important;
+    padding: 0 !important;
+  }
+  body.report-open .report-toolbar {
+    display: none !important;
+  }
+  #print-report {
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+  #print-report * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .rpt-page-break {
+    break-before: page;
+  }
+  .rpt-avoid-break {
+    break-inside: avoid;
+  }
+}
+@media print {
+  body.report-open {
+    background: #ffffff !important;
+  }
 }

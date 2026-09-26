@@ -51,6 +51,67 @@ export function polygonPerimeter(poly: Point[]): number {
   return edgeLengths(poly).reduce((s, l) => s + l, 0);
 }
 
+/** Perpendicular distance from `p` to the segment a–b (clamped to the segment). */
+export function pointSegmentDistance(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
+}
+
+/** Minimum distance from a point to the boundary of a (closed) polygon. */
+export function pointToPolygonDistance(p: Point, poly: Point[]): number {
+  if (poly.length < 2) return Infinity;
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const d = pointSegmentDistance(p, a, b);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** Clean up a noisy closed polygon: drop near-duplicate consecutive vertices,
+ *  then iteratively remove vertices that are (nearly) collinear with their
+ *  neighbours. Vector paths extracted from PDFs often carry hundreds of
+ *  sub-pixel decoration segments — this recovers the true corner set. */
+export function simplifyPolygon(poly: Point[], epsilon = 2): Point[] {
+  if (poly.length <= 4) return poly;
+
+  // 1. Near-duplicate consecutive vertices (including the closing wrap).
+  const pts: Point[] = [];
+  for (const p of poly) {
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > epsilon) pts.push(p);
+  }
+  while (
+    pts.length > 1 &&
+    Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) <= epsilon
+  ) {
+    pts.pop();
+  }
+
+  // 2. Iteratively drop vertices within epsilon of the line through their
+  //    neighbours, until stable (handles long chains of tiny segments).
+  let changed = true;
+  while (changed && pts.length > 4) {
+    changed = false;
+    for (let i = 0; i < pts.length && pts.length > 4; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const next = pts[(i + 1) % pts.length];
+      if (pointSegmentDistance(pts[i], prev, next) < epsilon) {
+        pts.splice(i, 1);
+        changed = true;
+        i--;
+      }
+    }
+  }
+  return pts;
+}
+
 export function polygonBBox(poly: Point[]) {
   if (poly.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0, cx: 0, cy: 0 };
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

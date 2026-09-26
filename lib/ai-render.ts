@@ -32,6 +32,50 @@ SURROUNDINGS: keep the white neighbouring volumes as flat pastel-white blocks wi
 
 Do not change geometry or proportions of any volume, only apply graphic style. No annotations, no labels, no text.`;
 
+export const DEFAULT_HYPERREAL_PROMPT = `Transform the provided axonometric massing into a photorealistic architectural rendering in the visual language of BIG (Bjarke Ingels Group), MVRDV and Heatherwick Studio — bold, sculptural, modern, iconic.
+
+ABSOLUTE GEOMETRIC FIDELITY (highest priority — do not negotiate):
+- This is an image-to-image render. The output must overlay onto the input pixel-for-pixel for the silhouette of the project volume.
+- Reuse the EXACT camera angle, framing, zoom and crop of the input. Do NOT re-frame, pan, dolly, change aspect ratio or rotate the building.
+- Preserve the exact footprint, total height, podium step, courtyards / holes and every set-back of the highlighted project volume.
+- Do NOT invent extra floors, towers, extrusions, antennas, spires or roof features.
+- If a GEOMETRY FACTS block is given above, the storey counts and floor heights it lists are exact — match them. Draw exactly that many horizontal floor-slab bands on the tower facade so the floors can be counted in the result.
+
+PROJECT BUILDING (the highlighted volume): contemporary residential tower with a striking sculptural facade. White architectural concrete or off-white fibre-cement panels, full-height floor-to-ceiling glazing in dark anodised aluminium frames, regular bays of glazing and deeply carved balcony loggias revealing warm timber soffits and slatted oak screens. Crisp shadow lines on every floor slab — one shadow line per storey listed in the geometry facts above. Disciplined parametric rhythm. Soft reflections of sky and context on the glass.
+
+If the volume includes a podium step, treat the podium roof as a lush landscaped amenity deck: infinity-edge swimming pool with turquoise water and travertine coping, timber decking, planters with mediterranean trees and ornamental grasses, pergolas with white tensile shading, lounge furniture, outdoor kitchen — composed and photographed from above.
+
+LIGHTING & ATMOSPHERE: golden-hour sun, warm low-angle directional light from one side casting long crisp shadows, soft global illumination, clear blue sky with a few thin cirrus clouds, gentle atmospheric haze in the distance. High dynamic range, physically based rendering, realistic ambient occlusion in every corner, subtle bloom on glazing highlights. Cinematic colour grade — clean whites, warm timber accents, lush greens, deep cobalt sky.
+
+CONTEXT: keep the surrounding neighbour volumes in their exact positions but render them realistically — sandy beige stone, glass curtain walls or rendered plaster facades typical of contemporary Dubai mid-rise architecture, all clearly subordinate to the project building. The ground plane reads as a real urban site: clean asphalt streets with lane markings, granite kerbs, generous wide pedestrian sidewalks in pale stone, mature street trees (date palms and ficus) with detailed canopies casting dappled shadows, small landscaped strips with shrubs and groundcover, parked cars, a few pedestrians for scale, bicycles. Subtle reflections in glazing on neighbour buildings.
+
+QUALITY: ultra-high-resolution architectural visualisation, sharp focus throughout, professional V-Ray / Corona / Lumion / Enscape look, magazine-cover composition, suitable for a developer marketing brochure. No labels, no text, no people that are recognisable, no logos.`;
+
+export const DEFAULT_WALK_HYPERREAL_PROMPT = `TASK: Turn this rough grey 3D viewport capture into a HYPERREALISTIC eye-level PHOTOGRAPH of a real, lived-in city street in Dubai / Abu Dhabi — indistinguishable from a picture taken on a full-frame camera. Think of the job as RE-TEXTURING AND RELIGHTING the exact scene in the input — like rendering the same 3D model with photoreal materials — NOT as designing a new building. The finished image must show no trace of the clay-model look: no flat untextured surfaces, no plain boxes, no empty lifeless streets, no CGI plastic feel.
+
+RULE #1 — THE PROJECT BUILDING'S GEOMETRY IS FIXED (overrides everything else in this prompt):
+- The project building is the one the camera faces, the tall volume with the detailed gridded facade. Its silhouette must overlay the input PIXEL-FOR-PIXEL: same outline, same width, same height, same position in frame.
+- Keep the SAME volumes in the SAME arrangement: if the input shows a podium block with a tower on top, the output shows that exact podium and that exact tower, with the tower sitting on the podium in exactly the same place. Every set-back, notch and step stays where it is.
+- Do NOT change the plan shape, do NOT round or chamfer corners, do NOT taper or twist the tower, do NOT add or remove set-backs, do NOT merge, split, widen, slim, shorten or heighten any volume, do NOT add crowns, spires, antennas, fins that change the outline, or any roof feature that alters the silhouette.
+- Same storey count: the input facade shows the real floor grid — reproduce one floor line per storey. If a GEOMETRY FACTS block is given above, its storey counts and floor heights are exact — match them.
+- Before finishing, verify: would the output building's outline trace exactly over the input's? If not, it is wrong — fix the geometry, not the style.
+
+CAMERA (do not negotiate):
+- Reuse the EXACT camera position, eye height (~1.7 m), viewing angle, lens / field of view, framing and crop of the input. Do NOT re-frame, pan, dolly, zoom or rotate.
+- If the input shows corrected, perfectly parallel verticals (an architectural tilt-shift view), keep the verticals perfectly parallel in the output too.
+
+PROJECT BUILDING — MATERIALS ONLY (all creativity stays ON the existing surfaces, never reshaping them): dress the exact volumes above as a premium contemporary residential tower. Full-height glazing in dark anodised frames following the input's facade grid, believable interior life glimpsed through the glass (sheer curtains, pendant lights, plants, furniture silhouettes), the input's recessed balconies rendered as carved loggias with clear-glass balustrades, warm timber soffits and residents' planting spilling over some of them, crisp floor-slab shadow lines, off-white architectural concrete or stone-clad piers with visible material grain. Where the input shows vertical fins on the ground / podium levels, render those same fins as bronze-anodised brise-soleil; the ground floor becomes a welcoming arrival with a stone-framed lobby glowing warmly from inside and a landscaped edge — all within the existing podium envelope. Real reflections of sky, street and neighbouring towers move across the glazing.
+
+CITY LIFE (essential — the street must feel inhabited): pedestrians at natural scale going about their day — residents strolling, a couple with a stroller, a jogger, someone walking a dog, people chatting in shade; a cyclist or delivery rider; a few parked cars along the kerb and one or two driving by (contemporary SUVs and saloons, no logos); a small ground-floor café terrace with parasols and seated guests where it plausibly fits. Faces small and not recognisable.
+
+VEGETATION & STREETSCAPE: mature date palms and ficus with detailed sunlit canopies casting dappled shadow, lush planted medians and beds with ornamental grasses and bougainvillea in bloom, clipped hedges, pale stone sidewalks with realistic paving joints, granite kerbs, clean asphalt showing subtle tyre wear, manhole covers and faint kerb stains — the small imperfections that make a photo read as real. Street lamps, benches, low landscape lighting.
+
+NEIGHBOURHOOD & SKYLINE: the plain box neighbours in the input are placeholders — replace them with believable contemporary Gulf residential high-rises and mid-rises (glass curtain walls, sand-toned stone and render, stacked balconies, rooftop amenities) keeping roughly their positions and heights, and fill the distance with a dense residential skyline dissolving into warm haze.
+
+LIGHT & ATMOSPHERE: strong, believable Gulf sunlight — late-afternoon golden light raking across the street with long soft shadows, warm bounce light on shaded facades, clear sky graduating to a hazy horizon, faint heat shimmer far away. High dynamic range, physically plausible exposure, realistic ambient occlusion in every reveal, subtle bloom only on the brightest glass highlights.
+
+PHOTO QUALITY: looks shot on a full-frame camera matching the input's field of view, f/8-sharp from foreground to skyline, accurate white balance, the faintest natural grain, cinematic but restrained colour grade. Magazine-cover architectural photography. No labels, no text, no logos, no watermarks.`;
+
 async function callGeminiOnce(
   apiKey: string,
   base64: string,

@@ -1,5 +1,4 @@
-import type { Project, Typology, ProgramCell, CommonArea, EconomicConfig } from "./types";
-import { perSqftToPerM2 } from "./units";
+import type { Project, Typology, ProgramCell, CommonArea } from "./types";
 
 const t = (
   id: string,
@@ -68,24 +67,12 @@ const COMMON_AREAS: CommonArea[] = [
   ca("zen", "Zen Garden", 46.68, 1, false, "Roof — Open air"),
 ];
 
-// Illustrative figures only, entered per sq ft as the Dubai market quotes them (stored per m²).
-const pricePerSqft: Record<Typology["category"], number> = {
-  Studio: 1300, "1BR": 1250, "2BR": 1200, "3BR": 1150, "4BR": 1150, Penthouse: 1400,
-};
-const SAMPLE_ECONOMICS: EconomicConfig = {
-  currency: "AED",
-  priceUnit: "sqft",
-  typologyPricing: Object.fromEntries(TYPOLOGIES.map((t) => [t.id, perSqftToPerM2(pricePerSqft[t.category])])),
-  landCost: 35_000_000,
-  constructionRatePerBUA: perSqftToPerM2(460),
-};
-
 export const PRODUCTION_CITY_SAMPLE: Project = {
   id: "production-city-sample",
   createdAt: 0,
   updatedAt: 0,
   name: "Production City — Sample",
-  zone: "Dubai Production City (IMPZ)",
+  zone: "Production City (IMPZ)",
   use: "RESIDENTIAL",
   plotArea: 6764.31,
   numFloors: 8,
@@ -110,14 +97,12 @@ export const PRODUCTION_CITY_SAMPLE: Project = {
     dcdMinLifts: 3,
     dcdMinUnitsThreshold: 100,
   },
-  economic: SAMPLE_ECONOMICS,
-  notes:
-    "Sample scheme in Dubai Production City (IMPZ). Sale prices, land and construction costs are illustrative placeholders — replace them with current market figures.",
+  notes: "",
   plotFrontage: 80,
   plotDepth: 84.55,
-  setbackFront: 6,
-  setbackRear: 3,
-  setbackSide: 3,
+  groundSetbackM: 3,
+  podiumSetbackM: 3,
+  towerSetbackM: 6,
 };
 
 export function newId(prefix = "p"): string {
@@ -131,7 +116,7 @@ export function emptyProject(name = "New Project"): Project {
     createdAt: now,
     updatedAt: now,
     name,
-    zone: "",
+    zone: "Other",
     use: "RESIDENTIAL",
     plotArea: 0,
     numFloors: 1,

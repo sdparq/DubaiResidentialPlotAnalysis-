@@ -1,7 +1,6 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { useProject, whenHydrated } from "@/lib/store";
-import { useSaveStatus } from "@/lib/persist-storage";
+import { useEffect, useState } from "react";
+import { useProject } from "@/lib/store";
 import PlotTab from "@/components/plot-tab";
 import SetupTab from "@/components/setup-tab";
 import TypologiesTab from "@/components/typologies-tab";
@@ -9,83 +8,97 @@ import ProgramTab from "@/components/program-tab";
 import CommonAreasTab from "@/components/common-areas-tab";
 import ParkingTab from "@/components/parking-tab";
 import LiftsTab from "@/components/lifts-tab";
-import GarbageTab from "@/components/garbage-tab";
 import MassingTab from "@/components/massing-tab";
-import PhysicsTab from "@/components/physics-tab";
-import EconomicTab from "@/components/economic-tab";
-import ResultsTab from "@/components/results-tab";
+import ZonesTab from "@/components/zones-tab";
+import SummaryTab from "@/components/summary-tab";
 import HeaderBar from "@/components/header-bar";
 import { BRAND } from "@/lib/brand";
 
 const TABS = [
   { id: "plot", num: "00", label: "Plot" },
   { id: "setup", num: "01", label: "Setup" },
-  { id: "typologies", num: "02", label: "Typologies" },
-  { id: "program", num: "03", label: "Program" },
-  { id: "common", num: "04", label: "Common Areas" },
+  { id: "common", num: "02", label: "Distribution" },
+  { id: "typologies", num: "03", label: "Typologies" },
+  { id: "program", num: "04", label: "Apartments" },
   { id: "parking", num: "05", label: "Parking" },
   { id: "lifts", num: "06", label: "Lifts" },
-  { id: "garbage", num: "07", label: "Waste" },
-  { id: "massing", num: "08", label: "Massing" },
-  { id: "physics", num: "09", label: "Sun & Views" },
-  { id: "economic", num: "10", label: "Economics" },
-  { id: "results", num: "11", label: "Results" },
+  { id: "massing", num: "07", label: "Massing" },
+  { id: "summary", num: "08", label: "Areas Summary" },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+type TabId = (typeof TABS)[number]["id"] | "zones";
 
-const isTab = (v: string): v is TabId => TABS.some((t) => t.id === v);
+/** The Class Library is the shared pricing/mix database — hidden from the
+ *  regular tab bar. Set NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256 at build time to
+ *  admin-gate it (only the SHA-256 of the password ships in the bundle); when
+ *  it is not set, the lock opens the library directly. */
+const LIBRARY_PASSWORD_SHA256 = (process.env.NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256 ?? "").trim().toLowerCase();
+const LIBRARY_UNLOCK_KEY = "plot-analysis-library-unlock";
+
+async function sha256Hex(text: string): Promise<string> {
+  const buf = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export default function Page() {
   const [tab, setTab] = useState<TabId>("setup");
   const [hydrated, setHydrated] = useState(false);
+  const [libraryUnlocked, setLibraryUnlocked] = useState(false);
   const project = useProject();
-  const saveError = useSaveStatus((s) => s.error);
-  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
 
   useEffect(() => {
-    let alive = true;
-    whenHydrated().then(() => alive && setHydrated(true));
-    const fromHash = window.location.hash.replace("#", "");
-    if (isTab(fromHash)) setTab(fromHash);
-    return () => {
-      alive = false;
-    };
+    setLibraryUnlocked(window.sessionStorage.getItem(LIBRARY_UNLOCK_KEY) === "1");
+    setHydrated(true);
   }, []);
+  if (!hydrated) return null;
 
-  function selectTab(id: TabId) {
-    setTab(id);
-    window.history.replaceState(null, "", `#${id}`);
-    tabRefs.current[id]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  async function openLibrary() {
+    if (libraryUnlocked) {
+      setTab("zones");
+      return;
+    }
+    if (!LIBRARY_PASSWORD_SHA256) {
+      window.sessionStorage.setItem(LIBRARY_UNLOCK_KEY, "1");
+      setLibraryUnlocked(true);
+      setTab("zones");
+      return;
+    }
+    const pw = window.prompt("The Class Library is restricted.\nEnter the admin password:");
+    if (pw == null || pw === "") return;
+    try {
+      if ((await sha256Hex(pw)) !== LIBRARY_PASSWORD_SHA256) {
+        window.alert("Wrong password.");
+        return;
+      }
+    } catch {
+      window.alert("Password check needs a secure (https) context — open the deployed site.");
+      return;
+    }
+    window.sessionStorage.setItem(LIBRARY_UNLOCK_KEY, "1");
+    setLibraryUnlocked(true);
+    setTab("zones");
   }
 
-  if (!hydrated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-3" />
-          <div className="eyebrow">Loading your projects…</div>
-        </div>
-      </div>
-    );
+  function lockLibrary() {
+    window.sessionStorage.removeItem(LIBRARY_UNLOCK_KEY);
+    setLibraryUnlocked(false);
+    setTab("setup");
   }
 
   return (
     <div className="min-h-screen flex flex-col overflow-x-hidden">
       <HeaderBar />
-      <nav className="border-b border-ink-200 bg-white sticky top-0 z-20 print:hidden">
+      <nav className="border-b border-ink-200 bg-white sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-2 sm:px-6">
-          <div className="flex overflow-x-auto lg:flex-wrap gap-x-1 no-scrollbar">
+          <div className="flex overflow-x-auto lg:flex-wrap gap-x-1 gap-y-0 items-center no-scrollbar">
             {TABS.map((t) => {
               const active = tab === t.id;
               return (
                 <button
                   key={t.id}
-                  ref={(el) => {
-                    tabRefs.current[t.id] = el;
-                  }}
-                  onClick={() => selectTab(t.id)}
-                  aria-current={active ? "page" : undefined}
+                  onClick={() => setTab(t.id)}
                   className={`relative shrink-0 whitespace-nowrap px-3 xl:px-4 py-4 text-[12.5px] xl:text-[13px] font-semibold transition-colors flex items-baseline gap-2 ${
                     active ? "text-ink-900" : "text-ink-500 hover:text-ink-900"
                   }`}
@@ -97,35 +110,58 @@ export default function Page() {
                 </button>
               );
             })}
+            {libraryUnlocked ? (
+              <div className="ml-auto flex items-center shrink-0">
+                <button
+                  onClick={() => setTab("zones")}
+                  className={`relative shrink-0 whitespace-nowrap px-3 xl:px-4 py-4 text-[12.5px] xl:text-[13px] font-semibold transition-colors flex items-baseline gap-2 ${
+                    tab === "zones" ? "text-ink-900" : "text-ink-500 hover:text-ink-900"
+                  }`}
+                  style={{ letterSpacing: "0.06em" }}
+                >
+                  <span className={`text-[10px] font-medium ${tab === "zones" ? "text-brand-600" : "text-ink-400"}`}>L</span>
+                  <span className="uppercase">Class Library</span>
+                  {tab === "zones" && <span className="absolute left-0 right-0 -bottom-px h-0.5 bg-brand-500" />}
+                </button>
+                <button
+                  onClick={lockLibrary}
+                  className="px-2 py-4 text-[12px] text-ink-400 hover:text-ink-700 transition-colors"
+                  title="Lock the Class Library again"
+                >
+                  🔓
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => void openLibrary()}
+                className="ml-auto shrink-0 px-3 py-4 text-[12px] text-ink-300 hover:text-ink-600 transition-colors"
+                title="Admin"
+                aria-label="Admin access"
+              >
+                🔒
+              </button>
+            )}
           </div>
         </div>
       </nav>
-      {saveError && (
-        <div className="bg-red-50 border-b border-red-200 text-red-800 text-[12.5px] print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5">{saveError}</div>
-        </div>
-      )}
       <main className="flex-1 w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 min-w-0">
+          {tab === "zones" && libraryUnlocked && <ZonesTab />}
           {tab === "plot" && <PlotTab />}
           {tab === "setup" && <SetupTab />}
           {tab === "typologies" && <TypologiesTab />}
           {tab === "program" && <ProgramTab />}
           {tab === "common" && <CommonAreasTab />}
+          {tab === "summary" && <SummaryTab />}
           {tab === "parking" && <ParkingTab />}
           {tab === "lifts" && <LiftsTab />}
-          {tab === "garbage" && <GarbageTab />}
           {tab === "massing" && <MassingTab />}
-          {tab === "physics" && <PhysicsTab />}
-          {tab === "economic" && <EconomicTab />}
-          {tab === "results" && <ResultsTab />}
         </div>
       </main>
-      <footer className="border-t border-ink-200 bg-bone-50 py-4 print:hidden">
+      <footer className="border-t border-ink-200 bg-bone-50 py-4">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between gap-x-4 gap-y-1 flex-wrap text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
           <span>{BRAND.wordmark} · {BRAND.descriptor}</span>
-          <a href="/demo/" className="text-brand-700 hover:text-brand-900 transition-colors">▶ Watch demo</a>
-          <span className="truncate max-w-full">{project.name} · Saved in this browser</span>
+          <span className="truncate">{project.name} · Auto-saved locally</span>
         </div>
       </footer>
     </div>

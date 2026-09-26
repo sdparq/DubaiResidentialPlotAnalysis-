@@ -1,36 +1,83 @@
 "use client";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { Project, Typology, ProgramCell, CommonArea, ParkingLevel, OtherUse } from "./types";
 import { PRODUCTION_CITY_SAMPLE, emptyProject, newId } from "./sample";
-import { createIdbStorage } from "./persist-storage";
-import { normalizeProject, parseImport } from "./project-io";
 
-interface PersistedState {
+/** localStorage wrapper that survives QuotaExceededError. The whole store is
+ *  one key rewritten on every change; plan images (parcel.imageDataUrl) can be
+ *  megabytes each, so with a few plans stored the browser quota gets hit and a
+ *  plain setItem throws — zustand's persist swallows that, leaving disk state
+ *  frozen mid-write-sequence. Symptom: an Apply that upserts N typologies looks
+ *  fine in memory but only the writes before the quota hit survive a reload
+ *  ("only Studio remains"). On quota failure we retry once with every plan
+ *  image stripped: the numeric project data ALWAYS persists; the images are
+ *  the sacrificial payload (UI offers a re-upload when one is missing). */
+const resilientStorage = {
+  getItem: (name: string) => (typeof window === "undefined" ? null : window.localStorage.getItem(name)),
+  removeItem: (name: string) => {
+    if (typeof window !== "undefined") window.localStorage.removeItem(name);
+  },
+  setItem: (name: string, value: string) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(name, value);
+    } catch {
+      try {
+        const parsed = JSON.parse(value) as { state?: { projects?: Record<string, Project> } };
+        for (const p of Object.values(parsed.state?.projects ?? {})) {
+          if (p.parcel?.imageDataUrl) p.parcel = { ...p.parcel, imageDataUrl: "" };
+        }
+        window.localStorage.setItem(name, JSON.stringify(parsed));
+        console.warn(
+          "plot-analysis: localStorage quota exceeded — project data saved, but plan images were dropped from local storage. Re-upload a plan drawing to see it again.",
+        );
+      } catch (e2) {
+        console.error("plot-analysis: could not persist project data at all", e2);
+      }
+    }
+  },
+};
+
+interface State {
   projects: Record<string, Project>;
   activeProjectId: string;
-}
 
-interface State extends PersistedState {
+  /** Returns the currently active project; throws if none — guaranteed by initState */
+  current: () => Project;
+
   // Multi-project management
   newProject: (name?: string) => string;
   loadSample: () => string;
   duplicateProject: (id: string, newName?: string) => string;
   deleteProject: (id: string) => void;
   switchProject: (id: string) => void;
-  /** Import a single exported project or a full backup. Returns how many projects were added. */
-  importJson: (json: unknown) => number;
 
   // Mutations on the active project
   setProject: (p: Project) => void;
   patch: (patch: Partial<Project>) => void;
 
+  // Cloud sync
+  /** Replace (or insert) a project keyed by its cloud uuid. Re-keys local ids
+   *  when a project gets linked for the first time. */
+  upsertFromCloud: (p: Project, opts?: { activate?: boolean }) => void;
+  /** Remove a project by its cloud id (does nothing if not present locally). */
+  removeByCloudId: (cloudId: string) => void;
+  /** Mark the active local-only project as linked to a freshly created cloud row. */
+  linkActiveToCloud: (cloudId: string) => void;
+  /** Link ANY local project (by its current local id) to a cloud row id —
+   *  used by the auto-uploader, which may finish after the user has already
+   *  switched to another project. */
+  linkProjectToCloud: (localId: string, cloudId: string) => void;
+  /** Detach a project from its cloud row (it becomes local-only and will be
+   *  re-inserted as its OWN row by the auto-saver). Used to heal duplicates
+   *  that inherited the original's cloudId before duplicateProject stripped it. */
+  unlinkProject: (localId: string) => void;
+
   upsertTypology: (t: Typology) => void;
   removeTypology: (id: string) => void;
 
   setProgramCell: (floor: number, typologyId: string, count: number) => void;
-  /** Replace every cell of the given floors with the cells of `fromFloor`. */
-  copyProgramFloor: (fromFloor: number, toFloors: number[]) => void;
 
   upsertCommonArea: (c: CommonArea) => void;
   removeCommonArea: (id: string) => void;
@@ -47,13 +94,10 @@ function freshSample(): Project {
   return { ...PRODUCTION_CITY_SAMPLE, id: newId("sample"), createdAt: now, updatedAt: now };
 }
 
-function initState(): PersistedState {
+function initState(): { projects: Record<string, Project>; activeProjectId: string } {
   const sample = freshSample();
   return { projects: { [sample.id]: sample }, activeProjectId: sample.id };
 }
-
-const mostRecent = (projects: Record<string, Project>) =>
-  Object.values(projects).sort((a, b) => b.updatedAt - a.updatedAt)[0];
 
 /** Helper: update the active project immutably and bump updatedAt */
 function updateActive(state: State, mutate: (p: Project) => Project): Partial<State> {
@@ -69,6 +113,11 @@ export const useStore = create<State>()(
     (set, get) => ({
       ...initState(),
 
+      current: () => {
+        const { projects, activeProjectId } = get();
+        return projects[activeProjectId] ?? freshSample();
+      },
+
       newProject: (name = "Untitled Project") => {
         const p = emptyProject(name);
         set((s) => ({ projects: { ...s.projects, [p.id]: p }, activeProjectId: p.id }));
@@ -77,6 +126,7 @@ export const useStore = create<State>()(
 
       loadSample: () => {
         const p = freshSample();
+        p.name = "Production City — Sample";
         set((s) => ({ projects: { ...s.projects, [p.id]: p }, activeProjectId: p.id }));
         return p.id;
       },
@@ -85,7 +135,18 @@ export const useStore = create<State>()(
         const src = get().projects[id];
         if (!src) return id;
         const now = Date.now();
-        const copy: Project = { ...src, id: newId(), name: newName ?? `${src.name} (copy)`, createdAt: now, updatedAt: now };
+        // cloudId MUST NOT be inherited: a copy that keeps the original's
+        // cloud row makes both projects write into (and pull from) the same
+        // row — their contents ping-pong into each other. The copy starts
+        // local-only and the auto-saver inserts it as its own row.
+        const copy: Project = {
+          ...src,
+          id: newId(),
+          cloudId: undefined,
+          name: newName ?? `${src.name} (copy)`,
+          createdAt: now,
+          updatedAt: now,
+        };
         set((s) => ({ projects: { ...s.projects, [copy.id]: copy }, activeProjectId: copy.id }));
         return copy.id;
       },
@@ -98,7 +159,10 @@ export const useStore = create<State>()(
             const blank = emptyProject();
             return { projects: { [blank.id]: blank }, activeProjectId: blank.id };
           }
-          const activeId = s.activeProjectId === id ? mostRecent(next).id : s.activeProjectId;
+          let activeId = s.activeProjectId;
+          if (activeId === id) {
+            activeId = Object.values(next).sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+          }
           return { projects: next, activeProjectId: activeId };
         });
       },
@@ -108,19 +172,64 @@ export const useStore = create<State>()(
         set({ activeProjectId: id });
       },
 
-      importJson: (json) => {
-        const found = parseImport(json);
-        if (found.length === 0) return 0;
-        set((s) => {
-          const projects = { ...s.projects };
-          for (const p of found) projects[p.id] = p;
-          return { projects, activeProjectId: found[0].id };
-        });
-        return found.length;
-      },
 
       setProject: (p) => set((s) => updateActive(s, () => p)),
       patch: (patch) => set((s) => updateActive(s, (p) => ({ ...p, ...patch }))),
+
+      upsertFromCloud: (p, opts) => {
+        const cloudId = p.cloudId ?? p.id;
+        const incoming: Project = { ...p, id: cloudId, cloudId };
+        set((s) => {
+          const existing = s.projects[cloudId];
+          // Don't clobber unsaved newer local edits.
+          if (existing && existing.updatedAt > incoming.updatedAt) return {};
+          const projects = { ...s.projects, [cloudId]: incoming };
+          const activeProjectId = opts?.activate ? cloudId : s.activeProjectId;
+          return { projects, activeProjectId };
+        });
+      },
+
+      removeByCloudId: (cloudId) => {
+        set((s) => {
+          if (!s.projects[cloudId]) return {};
+          const next = { ...s.projects };
+          delete next[cloudId];
+          if (Object.keys(next).length === 0) {
+            const blank = emptyProject();
+            return { projects: { [blank.id]: blank }, activeProjectId: blank.id };
+          }
+          let activeId = s.activeProjectId;
+          if (activeId === cloudId) {
+            activeId = Object.values(next).sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+          }
+          return { projects: next, activeProjectId: activeId };
+        });
+      },
+
+      linkActiveToCloud: (cloudId) => {
+        get().linkProjectToCloud(get().activeProjectId, cloudId);
+      },
+
+      unlinkProject: (localId) => {
+        set((s) => {
+          const p = s.projects[localId];
+          if (!p || !p.cloudId) return {};
+          return { projects: { ...s.projects, [localId]: { ...p, cloudId: undefined } } };
+        });
+      },
+
+      linkProjectToCloud: (localId, cloudId) => {
+        set((s) => {
+          const p = s.projects[localId];
+          if (!p || localId === cloudId) return {};
+          const linked: Project = { ...p, id: cloudId, cloudId, updatedAt: Date.now() };
+          const next = { ...s.projects };
+          delete next[localId];
+          next[cloudId] = linked;
+          const activeProjectId = s.activeProjectId === localId ? cloudId : s.activeProjectId;
+          return { projects: next, activeProjectId };
+        });
+      },
 
       upsertTypology: (t) =>
         set((s) =>
@@ -147,18 +256,6 @@ export const useStore = create<State>()(
             const next = p.program.filter((c) => !(c.floor === floor && c.typologyId === typologyId));
             if (count > 0) next.push({ floor, typologyId, count });
             return { ...p, program: next };
-          })
-        ),
-
-      copyProgramFloor: (fromFloor, toFloors) =>
-        set((s) =>
-          updateActive(s, (p) => {
-            const targets = new Set(toFloors.filter((f) => f !== fromFloor));
-            const source = p.program.filter((c) => c.floor === fromFloor && c.count > 0);
-            const kept = p.program.filter((c) => !targets.has(c.floor));
-            const copies: ProgramCell[] = [];
-            for (const f of Array.from(targets)) for (const c of source) copies.push({ ...c, floor: f });
-            return { ...p, program: [...kept, ...copies] };
           })
         ),
 
@@ -204,51 +301,31 @@ export const useStore = create<State>()(
     {
       name: "dubai-plot-analysis",
       version: 2,
-      storage: createIdbStorage<PersistedState>(),
+      storage: createJSONStorage(() => resilientStorage),
       migrate: (persisted: unknown, fromVersion: number) => {
         // v0/v1 shape: { project: Project (without id) }
         if (fromVersion < 2 && persisted && typeof persisted === "object" && "project" in persisted) {
-          const migrated = normalizeProject((persisted as { project: unknown }).project);
-          if (migrated) return { projects: { [migrated.id]: migrated }, activeProjectId: migrated.id } as unknown as State;
+          const old = (persisted as { project: Partial<Project> }).project;
+          const now = Date.now();
+          const id = newId();
+          const migrated: Project = {
+            ...PRODUCTION_CITY_SAMPLE,
+            ...old,
+            id,
+            createdAt: now,
+            updatedAt: now,
+          };
+          return { projects: { [id]: migrated }, activeProjectId: id };
         }
         return persisted as State;
       },
-      // Validate what comes back from storage and make sure the active id points at a real project.
-      merge: (persisted, current) => {
-        const p = persisted as Partial<PersistedState> | undefined;
-        if (!p || typeof p.projects !== "object" || p.projects === null) return current;
-        const projects: Record<string, Project> = {};
-        for (const raw of Object.values(p.projects)) {
-          const proj = normalizeProject(raw, true);
-          if (proj) projects[proj.id] = proj;
-        }
-        if (Object.keys(projects).length === 0) return current;
-        const activeProjectId =
-          p.activeProjectId && projects[p.activeProjectId] ? p.activeProjectId : mostRecent(projects).id;
-        return { ...current, projects, activeProjectId };
-      },
-      // Only persist data, not the action functions.
-      partialize: (s) => ({ projects: s.projects, activeProjectId: s.activeProjectId }),
+      // Only persist what we need (cast: the rest are functions, not data)
+      partialize: (s) => ({ projects: s.projects, activeProjectId: s.activeProjectId } as unknown as State),
     }
   )
 );
 
 /** Convenience hook used by all tabs — guaranteed-non-null current project */
 export function useProject(): Project {
-  const project = useStore((s) => s.projects[s.activeProjectId]);
-  return project ?? FALLBACK_PROJECT;
-}
-
-// Stable fallback so a (theoretically) missing active project never creates a new object per render.
-const FALLBACK_PROJECT: Project = { ...PRODUCTION_CITY_SAMPLE, id: "fallback" };
-
-/** Resolves once the persisted projects have been loaded (immediately if already done). */
-export function whenHydrated(): Promise<void> {
-  if (useStore.persist.hasHydrated()) return Promise.resolve();
-  return new Promise((resolve) => {
-    const unsub = useStore.persist.onFinishHydration(() => {
-      unsub();
-      resolve();
-    });
-  });
+  return useStore((s) => s.projects[s.activeProjectId]) ?? freshSample();
 }

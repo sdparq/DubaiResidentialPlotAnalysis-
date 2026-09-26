@@ -1,22 +1,103 @@
 "use client";
+import { useEffect, useMemo, useState } from "react";
 import { useStore, useProject } from "@/lib/store";
 import type { Typology, UnitCategory } from "@/lib/types";
-import { DUBAI_STANDARDS } from "@/lib/standards/dubai";
-import { fmt0 } from "@/lib/format";
-import { m2ToSqft } from "@/lib/units";
-import NumInput from "./num-input";
+import { useZoneLibrary } from "@/lib/use-zone-library";
+import {
+  classForZone,
+  DEFAULT_ZONE_CLASSES,
+  TYPOLOGY_LABELS,
+  type TypologyKey,
+  type ZoneClass,
+} from "@/lib/zone-classes";
+import {
+  computeProgramAutoFill,
+  effectiveMixPctForCategory,
+  resolveTypologyMix,
+  typologyUnitShare,
+} from "@/lib/calc/program-autofill";
+import { residentialSubGFA } from "@/lib/calc/gfa";
 
 const CATEGORIES: UnitCategory[] = ["Studio", "1BR", "2BR", "3BR", "4BR", "Penthouse"];
 
-const DEFAULT_PARKING = DUBAI_STANDARDS.parking.ratiosByCategory;
-const DEFAULT_OCCUPANCY: Record<UnitCategory, number> = {
-  Studio: 1.5, "1BR": 2, "2BR": 3, "3BR": 5, "4BR": 6, Penthouse: 6,
+const DEFAULT_PARKING: Record<UnitCategory, number> = {
+  Studio: 1, "1BR": 1, "2BR": 1, "3BR": 2, "4BR": 2, Penthouse: 2,
 };
+// Default occupancy (persons / unit) per Dubai DCD residential standard, Table D.5.
+// +1 person for each additional bedroom or live-in housekeeper room.
+const DEFAULT_OCCUPANCY: Record<UnitCategory, number> = {
+  Studio: 1.5, "1BR": 1.8, "2BR": 3, "3BR": 4, "4BR": 5, Penthouse: 6,
+};
+
+const SQFT_PER_M2 = 10.7639;
+
+// Map class-library keys to the project's existing UnitCategory enum.
+const CATEGORY_FOR_TYPOLOGY_KEY: Record<TypologyKey, UnitCategory | null> = {
+  studio: "Studio",
+  "1BR": "1BR",
+  "2BR": "2BR",
+  "3BR": "3BR",
+  "4BR": "4BR",
+  "5BR": null,    // not modelled today
+  "6BR": null,
+  "7BR": null,
+  penthouse: "Penthouse",
+};
+
+/** Numeric cell that tolerates in-progress typing. A plain controlled
+ *  number input re-renders on every keystroke, so intermediate states like
+ *  "62." or an emptied field snap back instantly and decimals become
+ *  untypeable. Keep the raw text locally while the user types, commit every
+ *  parseable value live, and resync with the store value on blur. */
+function NumCell({
+  value,
+  onCommit,
+  step = 0.5,
+  min,
+  max,
+  className = "cell-input text-right",
+  title,
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+  className?: string;
+  title?: string;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      step={step}
+      min={min}
+      max={max}
+      className={className}
+      title={title}
+      value={text ?? String(value)}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = parseFloat(e.target.value);
+        if (Number.isFinite(n)) onCommit(n);
+      }}
+      onBlur={() => setText(null)}
+    />
+  );
+}
 
 export default function TypologiesTab() {
   const project = useProject();
   const upsert = useStore((s) => s.upsertTypology);
   const remove = useStore((s) => s.removeTypology);
+  const patch = useStore((s) => s.patch);
+  const { library } = useZoneLibrary();
+
+  const detectedClass: ZoneClass | null = useMemo(
+    () => classForZone(project.zone, library),
+    [project.zone, library],
+  );
+  const apartmentsGFA = useMemo(() => residentialSubGFA(project, "apartments"), [project]);
 
   function addNew() {
     upsert({
@@ -30,33 +111,315 @@ export default function TypologiesTab() {
     });
   }
 
-  function update(t: Typology, patch: Partial<Typology>) {
-    upsert({ ...t, ...patch });
+  function update(t: Typology, partial: Partial<Typology>) {
+    upsert({ ...t, ...partial });
   }
+
+  /** Persist mix changes and silently re-run the Apartments auto-fill so the
+   *  next tab reflects the change immediately. */
+  function patchAndRefill(partial: {
+    typologyMix?: Partial<Record<UnitCategory, number>> | undefined;
+    typologyMixById?: Record<string, number> | undefined;
+    balconyGfaPct?: 0 | 50 | 100;
+  }) {
+    const projAfter = { ...project, ...partial };
+    const classMix = detectedClass ? library[detectedClass].typologyMix : null;
+    if (classMix) {
+      const resolved = resolveTypologyMix(projAfter, classMix);
+      const fill = computeProgramAutoFill(projAfter, resolved);
+      patch({ ...partial, program: fill?.cells ?? project.program });
+    } else {
+      patch(partial);
+    }
+  }
+
+  function setMixForTypology(id: string, pct: number) {
+    const safe = Math.max(0, Math.min(100, pct));
+    patchAndRefill({ typologyMixById: { ...(project.typologyMixById ?? {}), [id]: safe } });
+  }
+
+  function resetMixForTypology(id: string) {
+    const next = { ...(project.typologyMixById ?? {}) };
+    delete next[id];
+    patchAndRefill({ typologyMixById: Object.keys(next).length === 0 ? undefined : next });
+  }
+
+  function resetAllMix() {
+    patchAndRefill({ typologyMix: undefined, typologyMixById: undefined });
+  }
+
+  /** Scale every typology's effective share so the sum lands on 100% —
+   *  writes an explicit per-typology override for each one. */
+  function normalizeMix() {
+    const classMix = detectedClass ? library[detectedClass].typologyMix : null;
+    if (!classMix) return;
+    const resolved = resolveTypologyMix(project, classMix);
+    const eff = project.typologies.map((t) => ({
+      id: t.id,
+      pct: typologyUnitShare(project, resolved, t) * 100,
+    }));
+    const sum = eff.reduce((s, e) => s + e.pct, 0);
+    if (sum <= 0) return;
+    const factor = 100 / sum;
+    const next: Record<string, number> = {};
+    for (const e of eff) next[e.id] = Number((e.pct * factor).toFixed(1));
+    patchAndRefill({ typologyMixById: next });
+  }
+
+  /**
+   * The user enters the TOTAL sellable area (interior + balcony). We keep the
+   * typology's CURRENT balcony fraction stable: editing Total scales balcony
+   * and interior proportionally. If the typology hasn't been set up yet (its
+   * current balcony fraction is 0 AND interior is 0), we seed the balcony
+   * fraction from the detected class — otherwise leave it as 0%.
+   */
+  function setTotal(t: Typology, totalM2: number) {
+    if (!Number.isFinite(totalM2) || totalM2 < 0) totalM2 = 0;
+    const oldTotal = t.internalArea + t.balconyArea;
+    let pct: number;
+    if (oldTotal > 0) {
+      pct = t.balconyArea / oldTotal;
+    } else if (detectedClass) {
+      pct = library[detectedClass].balconyPctOfNsa;
+    } else {
+      pct = 0;
+    }
+    const balcony = Number((totalM2 * pct).toFixed(2));
+    const interior = Number((totalM2 - balcony).toFixed(2));
+    upsert({ ...t, internalArea: interior, balconyArea: balcony });
+  }
+
+  /** Edit balcony % directly. We keep the Total area constant (= average of
+   *  min/max for the class) and redistribute between interior and balcony.
+   *  The Program tab reflects this through `Interior GFA` (= interior × units
+   *  per floor) — Sellable stays fixed because Total is the sum of the two. */
+  function setBalconyPct(t: Typology, pctValue: number) {
+    if (!Number.isFinite(pctValue) || pctValue < 0) pctValue = 0;
+    if (pctValue > 100) pctValue = 100;
+    const total = t.internalArea + t.balconyArea;
+    const balcony = Number(((total * pctValue) / 100).toFixed(2));
+    const interior = Number((total - balcony).toFixed(2));
+    upsert({ ...t, internalArea: interior, balconyArea: balcony });
+  }
+
+  /**
+   * Create one typology per non-zero category in the detected class.
+   * Areas come from the class's minimum sellable (low end of the range,
+   * SqFt → m²), split between interior and balcony using `balconyPctOfNsa`.
+   * Iteration order follows TYPOLOGY_KEYS so Studio is first.
+   */
+  function applyClassMix(letter: ZoneClass, opts?: { silent?: boolean }) {
+    const row = library[letter];
+    const seed = DEFAULT_ZONE_CLASSES[letter];
+    const balconyShare =
+      Number.isFinite(row.balconyPctOfNsa) && row.balconyPctOfNsa >= 0 && row.balconyPctOfNsa < 1
+        ? row.balconyPctOfNsa
+        : seed.balconyPctOfNsa;
+    const created: Typology[] = [];
+    for (const key of (Object.keys(seed.typologyMix) as TypologyKey[])) {
+      // Belt and braces on top of the library sanitiser: fall back to the seed
+      // matrix per field so a malformed stored row can never produce an empty
+      // typology list.
+      const pct = Number.isFinite(row.typologyMix?.[key]) ? row.typologyMix[key] : seed.typologyMix[key];
+      if (pct < 0.005) continue;
+      const cat = CATEGORY_FOR_TYPOLOGY_KEY[key];
+      if (!cat) continue;
+      const range = row.avgAreaSqft?.[key];
+      const lo = Array.isArray(range) && Number.isFinite(range[0]) && range[0] > 0 ? range[0] : seed.avgAreaSqft[key][0];
+      const totalM2 = lo / SQFT_PER_M2;
+      if (totalM2 <= 0) continue;
+      const balconyM2 = totalM2 * balconyShare;
+      const interiorM2 = totalM2 - balconyM2;
+      created.push({
+        id: `t-${key}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        name: `${TYPOLOGY_LABELS[key]} · class ${letter}`,
+        category: cat,
+        internalArea: Number(interiorM2.toFixed(1)),
+        balconyArea: Number(balconyM2.toFixed(1)),
+        occupancy: DEFAULT_OCCUPANCY[cat],
+        parkingPerUnit: DEFAULT_PARKING[cat],
+      });
+    }
+    if (created.length === 0) {
+      // Mark as seeded even when nothing was created — otherwise the auto-seed
+      // effect retries (and alerts) on every mount of this tab.
+      if (!project.typologiesSeeded) patch({ typologiesSeeded: true });
+      if (!opts?.silent) {
+        alert(
+          `Class ${letter}'s data produced no typologies — its typology mix or unit areas look corrupted in this browser's Class Library.\n\nAsk an admin to open the Class Library (padlock icon in the tab bar) and press "Reset class ${letter}" (or "Reset all") to restore the seed values, then apply again.`,
+        );
+      }
+      return;
+    }
+    if (project.typologies.length > 0) {
+      const ok = confirm(
+        `Replace the existing ${project.typologies.length} typology(ies) with ${created.length} new ones from class ${letter}? The Program matrix will be refilled.`,
+      );
+      if (!ok) return;
+      for (const t of [...project.typologies]) remove(t.id);
+    }
+    for (const t of created) upsert(t);
+    if (!project.typologiesSeeded) patch({ typologiesSeeded: true });
+
+    // Immediately auto-fill the Apartments matrix from the new typology list —
+    // otherwise Program (and everything downstream: Parking, Lifts, Areas
+    // Summary) stays empty until the user separately visits Program and clicks
+    // "Apply to N floors" there, which reads as "typologies aren't applying".
+    // The replaced typologies' per-typology overrides are orphaned — clear them.
+    const projAfter = { ...project, typologies: created, typologyMixById: undefined };
+    const resolvedMix = resolveTypologyMix(projAfter, row.typologyMix);
+    const fill = computeProgramAutoFill(projAfter, resolvedMix);
+    patch({ program: fill?.cells ?? [], typologyMixById: undefined });
+    if (!fill && !opts?.silent) {
+      alert(
+        "Typologies created — but the Apartments matrix stays EMPTY because this project has no Residential GFA target yet.\n\nSet Target GFA and the Residential row in Setup → GFA breakdown, then re-apply the mix here (or use Apartments → Apply to N floors).",
+      );
+    }
+  }
+
+  // Auto-seed the typology list the first time a project lands on this tab with
+  // a recognised zone class and no typologies yet. Sets `typologiesSeeded` so
+  // we never re-fill silently — if the user deletes everything they stay empty.
+  useEffect(() => {
+    if (project.typologiesSeeded) return;
+    if (project.typologies.length > 0) {
+      patch({ typologiesSeeded: true });
+      return;
+    }
+    if (!detectedClass) return;
+    applyClassMix(detectedClass, { silent: true });
+    // applyClassMix already patches `typologiesSeeded: true` when the list was empty.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, project.typologiesSeeded, project.typologies.length, detectedClass]);
 
   return (
     <div className="grid gap-6">
+      {detectedClass && apartmentsGFA <= 0 && (
+        <div className="card bg-amber-50 border-amber-200">
+          <div className="eyebrow text-amber-800 text-[10px]">No Residential GFA set</div>
+          <p className="text-[12.5px] text-ink-800 mt-1 leading-snug">
+            Typologies can be created here, but the <strong>Apartments matrix will stay empty</strong>:
+            the auto-fill needs a m² target to distribute units against. Set <strong>Target GFA</strong>{" "}
+            and the <strong>Residential</strong> row in Setup → GFA breakdown first — then apply the
+            class mix (or edit any Unit mix % below) and Apartments fills automatically.
+          </p>
+        </div>
+      )}
+
+      {!detectedClass && (
+        <div className="card bg-amber-50 border-amber-200">
+          <div className="eyebrow text-amber-800 text-[10px]">No class detected for this zone</div>
+          <p className="text-[12.5px] text-ink-800 mt-1 leading-snug">
+            Current zone: <strong>{project.zone ? `"${project.zone}"` : "(empty)"}</strong>. It doesn&apos;t match
+            any location in the Class Library, so there is no suggested mix and no{" "}
+            <strong>Apply class mix</strong> button here. Either:
+          </p>
+          <ul className="text-[12.5px] text-ink-800 mt-1.5 leading-snug list-disc pl-5 space-y-0.5">
+            <li>Pick a listed zone in <strong>Setup</strong> (tab 01, &quot;Zone (Dubai / Abu Dhabi)&quot;), or</li>
+            <li>Ask an admin to add this exact zone name to a class in the <strong>Class Library</strong> (🔒 icon at the right of the tab bar).</li>
+          </ul>
+          <p className="text-[11px] text-ink-600 mt-2 leading-snug">
+            You can still add typologies manually below without a detected class.
+          </p>
+        </div>
+      )}
+
+      {detectedClass && (
+        <div className="card bg-brand-50 border-brand-200">
+          <div className="flex items-start gap-4 flex-wrap">
+            <div className="text-[36px] font-light text-brand-700 tabular-nums leading-none">{detectedClass}</div>
+            <div className="flex-1 min-w-[260px]">
+              <div className="eyebrow text-brand-800 text-[10px]">Suggested mix for this zone</div>
+              <div className="text-[14px] font-medium text-ink-900 mt-0.5">{library[detectedClass].name}</div>
+              <table className="w-full mt-3 text-[12px] tabular-nums">
+                <thead>
+                  <tr className="text-[10.5px] uppercase tracking-[0.08em] text-ink-500">
+                    <th className="text-left py-1 font-medium">Typology</th>
+                    <th className="text-right py-1 font-medium">% of units</th>
+                    <th className="text-right py-1 font-medium">Min area (min–max)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(Object.keys(library[detectedClass].typologyMix) as TypologyKey[])
+                    .filter((k) => library[detectedClass].typologyMix[k] > 0.001)
+                    .map((k) => {
+                      const pct = library[detectedClass].typologyMix[k];
+                      const [lo, hi] = library[detectedClass].avgAreaSqft[k];
+                      return (
+                        <tr key={k} className="border-t border-brand-200/60">
+                          <td className="py-1 text-ink-900">{TYPOLOGY_LABELS[k]}</td>
+                          <td className="text-right text-ink-900">{(pct * 100).toFixed(1)}%</td>
+                          <td className="text-right text-ink-600">
+                            {lo === hi ? `${lo.toLocaleString("en-US")}` : `${lo.toLocaleString("en-US")}–${hi.toLocaleString("en-US")}`} sqft
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+            <div className="grid gap-2 min-w-[180px]">
+              <button
+                className="btn btn-primary"
+                onClick={() => applyClassMix(detectedClass)}
+              >Apply class {detectedClass} mix</button>
+              <p className="text-[10.5px] text-ink-500 leading-snug">
+                Creates one typology per non-zero category using the class&apos;s
+                <strong> minimum</strong> sellable area. Below, edit <em>Total area</em>
+                and the balcony is auto-deducted at{" "}
+                <strong>{(library[detectedClass].balconyPctOfNsa * 100).toFixed(1)}%</strong>{" "}
+                of total (class {detectedClass} from the matrix).
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detectedClass && (
+        <UnitMixCard
+          library={library}
+          detectedClass={detectedClass}
+          project={project}
+          onSetTypology={setMixForTypology}
+          onResetTypology={resetMixForTypology}
+          onResetAll={resetAllMix}
+          onNormalize={normalizeMix}
+        />
+      )}
+
+      {/* Balconies in GFA — decides how much GFA each unit consumes, hence how
+          many units the Apartments GFA target yields. */}
+      <BalconyGfaCard
+        value={project.balconyGfaPct ?? 0}
+        onChange={(pct) => patchAndRefill({ balconyGfaPct: pct })}
+        apartmentsGFA={residentialSubGFA(project, "apartments")}
+        unitsUnder={(pct) => {
+          // The exact auto-fill each rule would produce — same engine, same
+          // mix — so the read-out matches what Apartments will show.
+          const classMix = detectedClass ? library[detectedClass].typologyMix : null;
+          if (!classMix) return 0;
+          const projAt = { ...project, balconyGfaPct: pct };
+          return computeProgramAutoFill(projAt, resolveTypologyMix(projAt, classMix))?.totalUnits ?? 0;
+        }}
+      />
+
       <div className="card">
-        <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+        <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <h2 className="section-title">Typologies</h2>
-            <p className="section-sub">
-              Define each unit type used in the project. Areas in m². Occupancy and parking ratios drive the lift and
-              parking calculations — changing the category loads its default ratios.
-            </p>
+            <p className="section-sub">Define each unit type used in the project. Areas in m². Occupancy and parking ratios drive the lift and parking calculations.</p>
           </div>
           <button className="btn btn-primary" onClick={addNew}>+ Add typology</button>
         </div>
         {project.typologies.length === 0 ? (
           <div className="text-sm text-ink-500 italic py-10 text-center">No typologies yet — add one to start.</div>
         ) : (
-          <div className="tbl-scroll" style={{ ["--tbl-min" as string]: "820px" }}>
-            <table className="tbl w-full table-fixed">
+          <div>
+            <table className="tbl w-full table-fixed" style={{ minWidth: 780 }}>
               <colgroup>
                 <col />
                 <col style={{ width: 110 }} />
-                <col style={{ width: 100 }} />
-                <col style={{ width: 100 }} />
+                <col style={{ width: 110 }} />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 90 }} />
                 <col style={{ width: 100 }} />
@@ -66,9 +429,8 @@ export default function TypologiesTab() {
                 <tr>
                   <th>Name</th>
                   <th>Category</th>
-                  <th className="text-right">Interior (m²)</th>
-                  <th className="text-right">Balcony (m²)</th>
-                  <th className="text-right">Sellable</th>
+                  <th className="text-right whitespace-normal leading-tight">Total area (m²)</th>
+                  <th className="text-right whitespace-normal leading-tight">Balcony %{detectedClass && ` · class ${(library[detectedClass].balconyPctOfNsa * 100).toFixed(0)}%`}</th>
                   <th className="text-right">Occupancy</th>
                   <th className="text-right">Parking / unit</th>
                   <th></th>
@@ -78,43 +440,68 @@ export default function TypologiesTab() {
                 {project.typologies.map((t) => {
                   const total = t.internalArea + t.balconyArea;
                   return (
-                    <tr key={t.id}>
-                      <td className="cell-edit">
-                        <input className="cell-input" value={t.name} onChange={(e) => update(t, { name: e.target.value })} aria-label="Typology name" />
-                      </td>
-                      <td className="cell-edit">
-                        <select
-                          className="cell-input"
-                          value={t.category}
-                          aria-label="Category"
-                          onChange={(e) => {
-                            const cat = e.target.value as UnitCategory;
-                            update(t, { category: cat, occupancy: DEFAULT_OCCUPANCY[cat], parkingPerUnit: DEFAULT_PARKING[cat] });
-                          }}
-                        >
-                          {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-                        </select>
-                      </td>
-                      <td className="cell-edit">
-                        <NumInput className="cell-input text-right" value={t.internalArea} min={0} step={0.5} onChange={(v) => update(t, { internalArea: v })} aria-label="Interior area" />
-                      </td>
-                      <td className="cell-edit">
-                        <NumInput className="cell-input text-right" value={t.balconyArea} min={0} step={0.5} onChange={(v) => update(t, { balconyArea: v })} aria-label="Balcony area" />
-                      </td>
-                      <td className="text-right leading-tight">
-                        {total.toFixed(2)} m²
-                        <span className="block text-[11px] text-ink-500">{fmt0(m2ToSqft(total))} sq ft</span>
-                      </td>
-                      <td className="cell-edit">
-                        <NumInput className="cell-input text-right" value={t.occupancy} min={0} step={0.5} onChange={(v) => update(t, { occupancy: v })} aria-label="Occupancy" />
-                      </td>
-                      <td className="cell-edit">
-                        <NumInput className="cell-input text-right" value={t.parkingPerUnit} min={0} step={0.5} onChange={(v) => update(t, { parkingPerUnit: v })} aria-label="Parking per unit" />
-                      </td>
-                      <td className="text-right">
-                        <button className="btn btn-danger btn-xs" onClick={() => { if (confirm(`Delete ${t.name}? Its units are removed from the program.`)) remove(t.id); }}>Delete</button>
-                      </td>
-                    </tr>
+                  <tr key={t.id}>
+                    <td className="cell-edit">
+                      <input className="cell-input" value={t.name} onChange={(e) => update(t, { name: e.target.value })} />
+                    </td>
+                    <td className="cell-edit">
+                      <select
+                        className="cell-input"
+                        value={t.category}
+                        onChange={(e) => {
+                          const cat = e.target.value as UnitCategory;
+                          update(t, { category: cat, occupancy: DEFAULT_OCCUPANCY[cat], parkingPerUnit: DEFAULT_PARKING[cat] });
+                        }}
+                      >
+                        {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                      </select>
+                    </td>
+                    <td className="cell-edit">
+                      <NumCell
+                        value={Number(total.toFixed(2))}
+                        min={0}
+                        onCommit={(n) => setTotal(t, Math.max(0, n))}
+                        title="Total sellable (interior + balcony). Editing this auto-deducts balcony from the class %."
+                      />
+                    </td>
+                    <td className="cell-edit">
+                      <div className="relative">
+                        <NumCell
+                          value={total > 0 ? Number(((t.balconyArea / total) * 100).toFixed(1)) : 0}
+                          min={0}
+                          max={100}
+                          className="cell-input text-right pr-7"
+                          onCommit={(n) => setBalconyPct(t, n)}
+                          title="Balcony as % of Total area. Editing this keeps Total constant."
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10.5px] text-ink-400 pointer-events-none">%</span>
+                      </div>
+                      <div className="text-[10px] text-ink-500 text-right mt-0.5 tabular-nums">
+                        = {t.balconyArea.toFixed(1)} m²
+                      </div>
+                    </td>
+                    <td className="cell-edit">
+                      <NumCell step={0.1} min={0} value={t.occupancy} onCommit={(n) => update(t, { occupancy: Math.max(0, n) })} />
+                    </td>
+                    <td className="cell-edit">
+                      <NumCell step={0.1} min={0} value={t.parkingPerUnit} onCommit={(n) => update(t, { parkingPerUnit: Math.max(0, n) })} />
+                    </td>
+                    <td className="text-right">
+                      <button
+                        className="btn btn-danger btn-xs"
+                        onClick={() => {
+                          if (!confirm(`Delete ${t.name}?`)) return;
+                          remove(t.id);
+                          // Drop its per-typology mix override too.
+                          if (project.typologyMixById?.[t.id] !== undefined) {
+                            const next = { ...project.typologyMixById };
+                            delete next[t.id];
+                            patch({ typologyMixById: Object.keys(next).length === 0 ? undefined : next });
+                          }
+                        }}
+                      >Delete</button>
+                    </td>
+                  </tr>
                   );
                 })}
               </tbody>
@@ -122,6 +509,246 @@ export default function TypologiesTab() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function UnitMixCard({
+  library,
+  detectedClass,
+  project,
+  onSetTypology,
+  onResetTypology,
+  onResetAll,
+  onNormalize,
+}: {
+  library: ReturnType<typeof useZoneLibrary>["library"];
+  detectedClass: ZoneClass;
+  project: ReturnType<typeof useProject>;
+  onSetTypology: (id: string, pct: number) => void;
+  onResetTypology: (id: string) => void;
+  onResetAll: () => void;
+  onNormalize: () => void;
+}) {
+  const classMix = library[detectedClass].typologyMix;
+  const byId = project.typologyMixById ?? {};
+  const resolved = resolveTypologyMix(project, classMix);
+  const hasAnyOverride =
+    Object.keys(project.typologyMix ?? {}).length > 0 ||
+    project.typologies.some((t) => byId[t.id] !== undefined);
+
+  // ONE ROW PER TYPOLOGY — "Studio Premium" and "Studio Standard" each carry
+  // their own share of total units.
+  const rows = project.typologies.map((t) => {
+    const sameCat = project.typologies.filter((x) => x.category === t.category).length || 1;
+    const classPct =
+      effectiveMixPctForCategory(
+        { ...project, typologyMix: undefined } as ReturnType<typeof useProject>,
+        classMix,
+        t.category,
+      ) / sameCat;
+    const effPct = typologyUnitShare(project, resolved, t) * 100;
+    const isOverride = byId[t.id] !== undefined;
+    return { t, classPct, effPct, isOverride };
+  });
+  const effSum = rows.reduce((s, r) => s + r.effPct, 0);
+  const offNorm = rows.length > 0 && Math.abs(effSum - 100) > 0.5;
+
+  // Class categories with % > 0 but no typology in the project contribute
+  // zero units — surface them so the mix isn't silently short.
+  const missingCats = CATEGORIES.filter(
+    (cat) =>
+      effectiveMixPctForCategory(project, classMix, cat) > 0 &&
+      !project.typologies.some((t) => t.category === cat),
+  );
+
+  return (
+    <div className="card">
+      <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+        <div>
+          <h2 className="section-title">Unit mix · this project</h2>
+          <p className="section-sub">
+            One row per typology — each carries its own {`% of total units`}, so two typologies of
+            the same category (a premium and a standard Studio, say) can hold different shares.
+            Editing any row re-runs the Apartments auto-fill silently. Italic numbers follow the
+            class {detectedClass} default (split among same-category typologies); bold numbers are
+            project overrides.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasAnyOverride && (
+            <button
+              className="text-[11px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+              onClick={onResetAll}
+              title="Clear every override and fall back to class defaults"
+            >Reset to class {detectedClass}</button>
+          )}
+          {offNorm && (
+            <button
+              className="text-[11px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+              onClick={onNormalize}
+              title="Scale every category proportionally so the sum equals 100%"
+            >Normalize to 100%</button>
+          )}
+        </div>
+      </div>
+
+      <div className="border border-ink-200">
+        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+          <div>Typology</div>
+          <div className="text-right">Class {detectedClass} default</div>
+          <div className="text-right">This project %</div>
+          <div></div>
+        </div>
+        {rows.length === 0 && (
+          <div className="px-3 py-3 text-[12px] text-ink-500">
+            No typologies in the project yet — apply the class mix or add one below.
+          </div>
+        )}
+        {rows.map((r) => (
+          <div
+            key={r.t.id}
+            className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
+          >
+            <div>
+              <div className="text-ink-900">{r.t.name}</div>
+              <div className="text-[10px] uppercase tracking-[0.08em] text-ink-400">{r.t.category}</div>
+            </div>
+            <div className="text-right text-ink-500">{r.classPct.toFixed(1)}%</div>
+            <div className="text-right">
+              <div className="relative inline-block">
+                <NumCell
+                  value={Number(r.effPct.toFixed(1))}
+                  min={0}
+                  max={100}
+                  className={`cell-input text-right !py-1 !pl-1.5 !pr-6 w-[90px] ${
+                    r.isOverride ? "text-ink-900 font-medium" : "text-ink-500 italic"
+                  }`}
+                  onCommit={(n) => onSetTypology(r.t.id, n)}
+                />
+                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9.5px] text-ink-400 pointer-events-none">%</span>
+              </div>
+            </div>
+            <div className="text-right">
+              {r.isOverride ? (
+                <button
+                  onClick={() => onResetTypology(r.t.id)}
+                  className="text-[10px] uppercase tracking-[0.10em] text-ink-500 hover:text-brand-700"
+                  title="Revert this typology to its class-derived share"
+                >Reset</button>
+              ) : (
+                <span className="text-[10px] text-ink-300">default</span>
+              )}
+            </div>
+          </div>
+        ))}
+        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 items-center text-[11.5px] tabular-nums bg-bone-50/40 border-t border-ink-200">
+          <div className="uppercase tracking-[0.08em] text-[10.5px] text-ink-500">Sum</div>
+          <div className="text-right text-ink-500"></div>
+          <div className={`text-right ${offNorm ? "text-amber-700 font-medium" : "text-ink-700"}`}>
+            {effSum.toFixed(1)}%
+          </div>
+          <div></div>
+        </div>
+      </div>
+
+      {missingCats.length > 0 && (
+        <p className="text-[11px] text-amber-700 mt-2 leading-snug">
+          Class {detectedClass} assigns a share to {missingCats.join(", ")} but the project has no
+          typology of {missingCats.length === 1 ? "that category" : "those categories"} — they
+          contribute 0 units. Add one below if you want them in the mix.
+        </p>
+      )}
+
+      <p className="text-[11px] text-ink-500 mt-3 leading-snug">
+        The mix drives the Apartments auto-fill: total units N = Apartments GFA / average interior
+        area weighted by these %s, then units<sub>typology</sub> = round(N × % / 100).
+      </p>
+    </div>
+  );
+}
+
+const BALCONY_GFA_OPTIONS: { pct: 0 | 50 | 100; label: string; blurb: string }[] = [
+  { pct: 0, label: "0 % — exempt", blurb: "Balconies consume no GFA. Only interiors count against the Apartments GFA target." },
+  { pct: 50, label: "50 % — half counts", blurb: "Half of every balcony counts as GFA. Each unit consumes interior + ½ balcony." },
+  { pct: 100, label: "100 % — fully counts", blurb: "The whole balcony counts as GFA. Each unit consumes interior + balcony." },
+];
+
+/** How much of each balcony counts as GFA. Changing it re-runs the Apartments
+ *  auto-fill (via patchAndRefill) so the unit count follows at once. */
+function BalconyGfaCard({
+  value,
+  onChange,
+  apartmentsGFA,
+  unitsUnder,
+}: {
+  value: 0 | 50 | 100;
+  onChange: (pct: 0 | 50 | 100) => void;
+  apartmentsGFA: number;
+  /** Units the Apartments auto-fill yields under a given rule. */
+  unitsUnder: (pct: 0 | 50 | 100) => number;
+}) {
+  const factor = value / 100;
+  return (
+    <div className="card border-brand-200">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-[260px] flex-1">
+          <h2 className="section-title">Balconies in GFA</h2>
+          <p className="section-sub">
+            How much of each unit&apos;s balcony counts towards the FAR-regulated GFA. Authorities
+            differ — pick the rule that applies to this plot. It changes the <strong>GFA each unit
+            consumes</strong> (interior + counted balcony), so the Apartments auto-fill places
+            {" "}{value === 0 ? "the most" : value === 50 ? "fewer" : "the fewest"} units for the
+            same Apartments GFA target. Sellable (GSA) and built (BUA) areas always take the whole
+            balcony — they are physical.
+          </p>
+        </div>
+        <div className="flex border border-ink-200 overflow-hidden shrink-0 self-start">
+          {BALCONY_GFA_OPTIONS.map((o) => (
+            <button
+              key={o.pct}
+              className={`px-3 py-2 text-[11px] uppercase tracking-[0.08em] transition-colors ${
+                value === o.pct
+                  ? "bg-brand-700 text-white"
+                  : "bg-white text-ink-700 hover:bg-bone-100"
+              } ${o.pct !== 0 ? "border-l border-ink-200" : ""}`}
+              onClick={() => onChange(o.pct)}
+              title={o.blurb}
+            >{o.label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+        {BALCONY_GFA_OPTIONS.map((o) => {
+          const active = o.pct === value;
+          const n = unitsUnder(o.pct);
+          return (
+            <div
+              key={o.pct}
+              className={`border p-3 text-[11.5px] leading-snug ${
+                active ? "border-brand-500 bg-brand-50 text-ink-900" : "border-ink-100 text-ink-500"
+              }`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className={`eyebrow text-[10px] ${active ? "text-brand-800" : "text-ink-500"}`}>{o.label}</span>
+                {n > 0 && (
+                  <span className="tabular-nums text-[11px]">
+                    ≈ {n.toLocaleString("en-US")} units
+                  </span>
+                )}
+              </div>
+              <div className="mt-1">{o.blurb}</div>
+            </div>
+          );
+        })}
+      </div>
+      {apartmentsGFA > 0 && (
+        <p className="text-[10.5px] text-ink-500 mt-2 leading-snug">
+          Unit counts are the exact Apartments auto-fill for each rule (current unit mix and
+          typology areas) against the {Math.round(apartmentsGFA).toLocaleString("en-US")} m² Apartments
+          GFA target. Current rule: each unit consumes interior + {Math.round(factor * 100)} % of its balcony.
+        </p>
+      )}
     </div>
   );
 }

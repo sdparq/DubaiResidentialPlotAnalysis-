@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 
 export const metadata: Metadata = {
   title: `${BRAND.wordmark} · ${BRAND.descriptor} — ${BRAND.market}`,
-  description: `${BRAND.tagline} — GFA, unit mix, parking, lifts, waste, massing and economics in one tool.`,
+  description: `${BRAND.tagline} — GFA distribution, typologies, unit mix, parking, lifts and 3D massing in one tool.`,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

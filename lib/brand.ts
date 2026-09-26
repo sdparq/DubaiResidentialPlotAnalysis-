@@ -10,7 +10,7 @@ export const BRAND = {
   wordmark: "PLOTIQ",
   /** Small descriptor under the wordmark. */
   descriptor: "Plot Feasibility",
-  /** Full product name — browser tab, Excel exports. */
+  /** Full product name — browser tab, report footer. */
   productName: "PlotIQ — Residential Plot Feasibility",
   /** One-line pitch used in metadata and the demo. */
   tagline: "Residential plot feasibility for Dubai developers",
