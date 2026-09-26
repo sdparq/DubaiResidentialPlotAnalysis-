@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   assembleRings,
+  bboxAround,
+  overpassFailure,
   buildingHeights,
   fromLocal,
   isInUae,
@@ -184,10 +186,19 @@ describe("parseOverpass", () => {
 });
 
 describe("overpassQuery", () => {
-  it("asks for buildings, streets and water around the plot", () => {
+  it("asks for buildings, streets and water in a box around the plot", () => {
     const q = overpassQuery(BB, 400);
-    expect(q).toContain('way["building"](around:400,25.186500,55.264000);');
+    const box = bboxAround(BB, 400);
+    expect(box.north - box.south).toBeCloseTo(800 / 110776, 5);
+    expect(q).toContain(`[bbox:${box.south.toFixed(6)},${box.west.toFixed(6)},${box.north.toFixed(6)},${box.east.toFixed(6)}]`);
+    expect(q).toContain('way["building"];');
     expect(q).toContain("out geom");
     expect(q).toContain("primary");
+  });
+
+  it("treats timed-out answers as failures", () => {
+    expect(overpassFailure({ elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 61 seconds.' })).toMatch(/timed out/);
+    expect(overpassFailure({ elements: [] })).toBeNull();
+    expect(overpassFailure("<html>")).not.toBeNull();
   });
 });

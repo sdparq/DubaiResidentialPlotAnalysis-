@@ -149,3 +149,35 @@ export function Instanced({
     </instancedMesh>
   );
 }
+
+/** The same instanced mesh as `Instanced`, built outside React (for other renderers). */
+export function instancedObject({
+  matrices, geometry, colors, color = "#ffffff", roughness = 0.8, metalness = 0, opacity = 1, clearcoat = 0,
+  emissive, emissiveIntensity = 0, envMapIntensity = 1, flat = false, doubleSide = false,
+}: InstancedProps): THREE.InstancedMesh | null {
+  if (matrices.length === 0) return null;
+  const transparent = opacity < 1;
+  const common = {
+    color,
+    roughness,
+    metalness,
+    transparent,
+    opacity,
+    depthWrite: !transparent,
+    emissive: emissive ?? "#000000",
+    emissiveIntensity,
+    envMapIntensity,
+    flatShading: flat,
+    side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+  };
+  const material =
+    clearcoat > 0
+      ? new THREE.MeshPhysicalMaterial({ ...common, clearcoat, clearcoatRoughness: 0.12 })
+      : new THREE.MeshStandardMaterial(common);
+  const mesh = new THREE.InstancedMesh(geometry ?? UNIT_BOX, material, matrices.length);
+  matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+  colors?.forEach((c, i) => mesh.setColorAt(i, c));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  return mesh;
+}

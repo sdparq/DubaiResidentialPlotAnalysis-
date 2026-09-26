@@ -131,25 +131,45 @@ const ROAD_WIDTH: Record<string, number> = {
   service: 5,
 };
 
-/** Overpass QL for buildings, streets and water within `radiusM` of the plot. */
+/** Latitude/longitude box around a point — Overpass answers bbox queries much faster than `around`. */
+export function bboxAround(center: LatLng, radiusM: number) {
+  const m = metresPerDegree(center.lat);
+  const dLat = radiusM / m.lat;
+  const dLng = radiusM / m.lng;
+  return { south: center.lat - dLat, west: center.lng - dLng, north: center.lat + dLat, east: center.lng + dLng };
+}
+
+/** Overpass QL for buildings, streets and water around the plot. */
 export function overpassQuery(center: LatLng, radiusM: number): string {
-  const a = `(around:${Math.round(radiusM)},${center.lat.toFixed(6)},${center.lng.toFixed(6)})`;
+  const b = bboxAround(center, radiusM);
+  const bbox = [b.south, b.west, b.north, b.east].map((v) => v.toFixed(6)).join(",");
   const roads = Object.keys(ROAD_WIDTH).join("|");
   return [
-    "[out:json][timeout:25];",
+    `[out:json][timeout:60][bbox:${bbox}];`,
     "(",
-    `way["building"]${a};`,
-    `relation["building"]${a};`,
-    `way["building:part"]${a};`,
-    `relation["building:part"]${a};`,
-    `way["highway"~"^(${roads})$"]${a};`,
-    `way["natural"="water"]${a};`,
-    `relation["natural"="water"]${a};`,
-    `way["waterway"="riverbank"]${a};`,
-    `way["landuse"="basin"]${a};`,
+    'way["building"];',
+    'relation["building"];',
+    'way["building:part"];',
+    'relation["building:part"];',
+    `way["highway"~"^(${roads})$"];`,
+    'way["natural"="water"];',
+    'relation["natural"="water"];',
+    'way["waterway"="riverbank"];',
+    'way["landuse"="basin"];',
     ");",
     "out geom qt;",
   ].join("");
+}
+
+/**
+ * Overpass reports a query that ran out of time or memory as a "remark" in an
+ * otherwise normal answer — with no or partial data. Treat it as a failure.
+ */
+export function overpassFailure(json: unknown): string | null {
+  const remark = (json as { remark?: unknown } | null)?.remark;
+  if (typeof remark === "string" && /error|timed out|out of memory/i.test(remark)) return remark;
+  if (!Array.isArray((json as { elements?: unknown } | null)?.elements)) return "Unexpected answer from OpenStreetMap";
+  return null;
 }
 
 /** A building (or building part) extruded between `base` and `top` metres. */

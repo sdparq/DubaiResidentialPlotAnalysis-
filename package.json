@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@2gis/mapgl": "1.78.1",
     "@react-three/drei": "9.122.0",
     "@react-three/fiber": "8.18.0",
     "@supabase/supabase-js": "^2.105.4",

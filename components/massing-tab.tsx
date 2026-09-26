@@ -5,6 +5,7 @@ import {
   BuildingComplex,
   Camera,
   Compass as CompassIcon,
+  EyeOff,
   Focus,
   ImageDown,
   MapPin,
@@ -41,7 +42,12 @@ import { BRAND } from "@/lib/brand";
 import { ACCENTS, FACADE_STYLES, GLASSES, resolveFacade, type FacadeParams } from "@/lib/facade";
 import { formatLatLng, isInUae, parseLatLng, type LatLng, type SiteContext } from "@/lib/site-context";
 import { useSiteContext, type ContextStatus } from "@/lib/use-site-context";
+import { TWO_GIS_ENV_KEY, readBrowserKey, writeBrowserKey } from "@/lib/two-gis";
+import type { CityStatus } from "./city-view";
+import type { SchemeModelInput } from "./scheme-model";
 import { BrandMark } from "./shell/brand-mark";
+
+const CityView = dynamic(() => import("./city-view"), { ssr: false });
 
 const MassingScene = dynamic(() => import("./massing-scene"), {
   ssr: false,
@@ -258,6 +264,32 @@ export default function MassingTab() {
   const locationInputRef = useRef<HTMLInputElement>(null);
   const asideRef = useRef<HTMLElement>(null);
   const siteContext = project.siteContext;
+  // 2GIS city view: the deployment's key, unless this browser has its own.
+  const [gisKey, setGisKey] = useState(TWO_GIS_ENV_KEY);
+  useEffect(() => {
+    const own = readBrowserKey();
+    if (own) setGisKey(own);
+  }, []);
+  const saveGisKey = useCallback((k: string) => {
+    writeBrowserKey(k);
+    setGisKey(k || TWO_GIS_ENV_KEY);
+  }, []);
+  const cityHiddenIds = useMemo(() => project.cityHiddenIds ?? [], [project.cityHiddenIds]);
+  const toggleCityHidden = useCallback(
+    (id: string) =>
+      patch({
+        cityHiddenIds: cityHiddenIds.includes(id) ? cityHiddenIds.filter((x) => x !== id) : [...cityHiddenIds, id],
+      }),
+    [cityHiddenIds, patch],
+  );
+  const openSite = useCallback(() => {
+    setPanel("site");
+    requestAnimationFrame(() => {
+      asideRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      locationInputRef.current?.focus({ preventScroll: true });
+    });
+  }, []);
+
   const toggleContext = useCallback(() => {
     if (!location) {
       // Nowhere to put the plot yet: take the user to the location field.
@@ -343,10 +375,20 @@ export default function MassingTab() {
           northDeg={northDeg}
           metrics={metrics}
           tiersPresent={tiersPresent}
-          context={siteCtx.status === "ready" && contextOn ? siteCtx.data : null}
+          context={
+            siteCtx.status === "ready" && contextOn && siteCtx.data &&
+            siteCtx.data.buildings.length + siteCtx.data.roads.length + siteCtx.data.water.length > 0
+              ? siteCtx.data
+              : null
+          }
           contextRadius={contextRadius}
           contextState={contextState}
           onToggleContext={toggleContext}
+          location={location}
+          cityKey={gisKey}
+          cityHiddenIds={cityHiddenIds}
+          onCityPick={toggleCityHidden}
+          onOpenSite={openSite}
         />
 
         <aside ref={asideRef} className="card !p-0 overflow-hidden xl:sticky xl:top-[150px] scroll-mt-4">
@@ -491,6 +533,11 @@ export default function MassingTab() {
                   onEnabled={(v) => patch({ siteContext: { ...siteContext, enabled: v } })}
                   onRadius={(r) => patch({ siteContext: { ...siteContext, radiusM: r } })}
                   onRetry={siteCtx.retry}
+                  gisKey={gisKey}
+                  gisKeyIsOwn={gisKey !== TWO_GIS_ENV_KEY}
+                  onGisKey={saveGisKey}
+                  hiddenCount={cityHiddenIds.length}
+                  onShowHidden={() => patch({ cityHiddenIds: [] })}
                 />
                 <div className="grid gap-2">
                   <span className="text-[12px] font-medium text-ink-600">Plot geometry</span>
@@ -583,10 +630,13 @@ export default function MassingTab() {
 /*                                  Viewer                                    */
 /* -------------------------------------------------------------------------- */
 
-const STYLES: { id: SceneStyle; label: string; hint: string }[] = [
+type ViewStyle = SceneStyle | "city";
+
+const STYLES: { id: ViewStyle; label: string; hint: string }[] = [
   { id: "realistic", label: "Realistic", hint: "Dubai daylight with the chosen glass and metal" },
   { id: "model", label: "Model", hint: "White architectural model" },
   { id: "diagram", label: "Diagram", hint: "Colour by tier — basement, ground, podium, tower" },
+  { id: "city", label: "City", hint: "The tower in the real Dubai — 2GIS 3D map" },
 ];
 
 const SUN_DATES: { label: string; m: number; d: number }[] = [
@@ -618,18 +668,38 @@ interface ViewerProps {
   contextRadius: number;
   contextState: ContextStatus | "unplaced";
   onToggleContext: () => void;
+  /** Plot location, 2GIS key and hidden 2GIS buildings for the city view. */
+  location: LatLng | undefined;
+  cityKey: string;
+  cityHiddenIds: string[];
+  onCityPick: (id: string) => void;
+  onOpenSite: () => void;
 }
 
 const OSM_CREDIT = "© OpenStreetMap contributors";
+const GIS_CREDIT = "© 2GIS";
 
 const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
   const {
     projectId, projectName, zone, plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors,
     volumeLabels, facade, onAmenityFit, captureRef, northDeg, metrics, tiersPresent,
     context, contextRadius, contextState, onToggleContext,
+    location, cityKey, cityHiddenIds, onCityPick, onOpenSite,
   } = props;
 
-  const [style, setStyle] = useState<SceneStyle>("realistic");
+  const [style, setStyle] = useState<ViewStyle>("realistic");
+  const city = style === "city";
+  const cityReady = city && !!location && !!cityKey;
+  const [cityStatus, setCityStatus] = useState<CityStatus>({ state: "loading" });
+  const [picking, setPicking] = useState(false);
+  useEffect(() => {
+    if (!city) setPicking(false);
+  }, [city]);
+  const cityModel: SchemeModelInput = useMemo(
+    () => ({ volumes, plot, floorHeight, facade }),
+    [volumes, plot, floorHeight, facade],
+  );
+  const plotCentroid = useMemo(() => polygonCentroid(plot), [plot]);
   const [resetView, setResetView] = useState(0);
   const [autoRotate, setAutoRotate] = useState(false);
   const [showAnnotations, setShowAnnotations] = useState(true);
@@ -708,9 +778,11 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
     try {
       const shot = await cap({ scale: 2 });
       if (!shot) return;
-      const when = sun
-        ? ` · sun ${SUN_DATES.find((d) => d.m === sunDate.m && d.d === sunDate.d)?.label ?? ""} ${formatClock(clampedHour)}`
-        : "";
+      const when = city
+        ? " · city view"
+        : sun
+          ? ` · sun ${SUN_DATES.find((d) => d.m === sunDate.m && d.d === sunDate.d)?.label ?? ""} ${formatClock(clampedHour)}`
+          : "";
       const exportStats: Array<[string, string]> = [];
       if (metrics.totalGFA > 0) exportStats.push(["GFA", `${Math.round(metrics.totalGFA).toLocaleString("en-US")} m²`]);
       if (metrics.units > 0) exportStats.push(["Units", metrics.units.toLocaleString("en-US")]);
@@ -722,7 +794,7 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
         stats: exportStats,
         brand: BRAND.wordmark,
         tagline: BRAND.tagline,
-        attribution: context ? `Surroundings ${OSM_CREDIT}` : undefined,
+        attribution: city ? `Map ${GIS_CREDIT}` : context ? `Surroundings ${OSM_CREDIT}` : undefined,
       });
       downloadDataUrl(img, `${slug(projectName)}-massing.png`);
     } finally {
@@ -742,6 +814,42 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
           : "relative rounded-xl overflow-hidden border border-ink-200/80 shadow-card bg-bone-100 aspect-[3/4] sm:aspect-[4/3] xl:aspect-auto xl:h-[calc(100vh-318px)] xl:min-h-[500px] xl:max-h-[860px]"
       }
     >
+      {cityReady && location ? (
+        <CityView
+          apiKey={cityKey}
+          location={location}
+          northDeg={northDeg}
+          centroid={plotCentroid}
+          model={cityModel}
+          heightM={metrics.heightM}
+          hiddenIds={cityHiddenIds}
+          picking={picking}
+          onPick={onCityPick}
+          captureRef={captureRef}
+          resetView={resetView}
+          autoRotate={autoRotate}
+          onStatus={setCityStatus}
+        />
+      ) : city ? (
+        <div className="absolute inset-0 grid place-items-center bg-gradient-to-b from-bone-50 to-bone-200 p-6">
+          <div className="max-w-[380px] text-center">
+            <div className="mx-auto w-11 h-11 rounded-xl bg-white shadow-sm ring-1 ring-ink-200/70 grid place-items-center mb-3">
+              <MapPin className="w-5 h-5 text-brand-600" />
+            </div>
+            <div className="text-[15px] font-semibold text-ink-900">
+              {!location ? "Place the plot on the map first" : "Add a 2GIS key to open the city"}
+            </div>
+            <p className="text-[12.5px] text-ink-500 mt-1.5 leading-relaxed">
+              {!location
+                ? "The city view puts your tower in the real Dubai 3D map. Add the plot's coordinates in Site → Location & surroundings."
+                : "The city view uses the 2GIS 3D map of Dubai. Paste a 2GIS key in Site → Location & surroundings — a free demo key from dev.2gis.com works for a month."}
+            </p>
+            <button className="btn btn-primary btn-xs mt-3" onClick={onOpenSite}>
+              Open Site settings
+            </button>
+          </div>
+        </div>
+      ) : (
       <MassingScene
         plot={plot}
         buildable={buildable}
@@ -767,6 +875,7 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
         context={context}
         contextRadius={contextRadius}
       />
+      )}
 
       {/* Top-left: style + legend */}
       <div className="absolute z-20 top-3 left-3 grid gap-2 justify-items-start max-w-[calc(100%-24px)]">
@@ -803,13 +912,35 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
             ))}
           </div>
         )}
-        {contextState === "loading" && (
+        {cityReady && cityStatus.state === "loading" && (
+          <div className={`${glass} rounded-lg px-2.5 py-1.5 flex items-center gap-2 text-[11.5px] text-ink-700`} role="status">
+            <span className="w-3 h-3 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+            Loading the 2GIS city…
+          </div>
+        )}
+        {cityReady && cityStatus.state === "error" && (
+          <div className={`${glass} rounded-lg px-2.5 py-1.5 text-[11.5px] text-amber-800 max-w-[300px]`} role="status">
+            {cityStatus.message}
+          </div>
+        )}
+        {cityReady && cityStatus.state !== "error" && (
+          <button
+            onClick={() => setPicking((v) => !v)}
+            className={`${toolBtn} ${glass} ${picking ? "!bg-ink-900 text-white" : "text-ink-700 hover:bg-white"}`}
+            aria-pressed={picking}
+            title="Hide the buildings standing on the plot today"
+          >
+            <EyeOff className="w-4 h-4" />
+            {picking ? "Click buildings to hide or show them" : `Hide buildings${cityHiddenIds.length ? ` · ${cityHiddenIds.length} hidden` : ""}`}
+          </button>
+        )}
+        {!city && contextState === "loading" && (
           <div className={`${glass} rounded-lg px-2.5 py-1.5 flex items-center gap-2 text-[11.5px] text-ink-700`} role="status">
             <span className="w-3 h-3 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
             Loading surroundings…
           </div>
         )}
-        {contextState === "error" && (
+        {!city && contextState === "error" && (
           <div className={`${glass} rounded-lg px-2.5 py-1.5 text-[11.5px] text-amber-800`} role="status">
             Surroundings unavailable — retry in Site
           </div>
@@ -817,7 +948,7 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
       </div>
 
       {/* OpenStreetMap credit, required wherever its data is shown */}
-      {context && (
+      {context && !city && (
         <div className="absolute z-10 right-3 top-[52px] px-1.5 py-0.5 rounded bg-white/75 text-[10.5px] text-ink-600 pointer-events-auto">
           <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="hover:underline">
             {OSM_CREDIT}
@@ -854,6 +985,7 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
       {/* Bottom: compass + sun study + actions. Phones get two rows (sun bar on
           top, compass + actions under it); wider screens a single row. */}
       <div className="absolute z-20 left-3 right-3 bottom-3 grid gap-2 sm:flex sm:flex-wrap sm:items-end">
+        {!city && (
         <div className={`${glass} order-1 sm:order-2 rounded-xl px-3 py-2 grid gap-1.5 sm:flex sm:items-center sm:gap-3 min-w-0 sm:min-w-[440px]`}>
           <div className="flex items-center gap-2 min-w-0">
             <button
@@ -924,9 +1056,10 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
             </div>
           )}
         </div>
+        )}
 
         <div className="order-2 flex items-end justify-between gap-2 sm:contents">
-          <div className={`${glass} sm:order-1 w-11 h-11 rounded-full grid place-items-center shrink-0`} title="North">
+          <div className={`${glass} ${city ? "invisible" : ""} sm:order-1 w-11 h-11 rounded-full grid place-items-center shrink-0`} title="North">
             <div ref={compassRef} className="w-8 h-8 relative" aria-label="North arrow">
               <svg viewBox="0 0 32 32" className="w-8 h-8">
                 <path d="M16 3 L20 16 L16 14 L12 16 Z" fill="#0d7f69" />
@@ -937,6 +1070,8 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
           </div>
 
           <div className={`${glass} sm:order-3 rounded-xl p-1 flex items-center gap-0.5 sm:ml-auto`}>
+            {!city && (
+            <>
             <button
               onClick={() => setShowAnnotations((v) => !v)}
               className={`${toolBtn} ${showAnnotations ? "text-brand-700 bg-brand-50" : "text-ink-600 hover:bg-ink-900/5"}`}
@@ -970,6 +1105,8 @@ const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
             >
               <BuildingComplex className="w-4 h-4" />
             </button>
+            </>
+            )}
             <button onClick={() => void exportImage()} className={`${toolBtn} text-ink-700 hover:bg-ink-900/5`} title="Download a branded presentation image (PNG)" aria-label="Download image" disabled={exporting}>
               {exporting ? <Camera className="w-4 h-4 animate-pulse" /> : <ImageDown className="w-4 h-4" />}
               <span className="hidden md:inline">Image</span>
@@ -1038,6 +1175,7 @@ const RADII = [250, 400, 600];
 
 function SiteContextPanel({
   location, enabled, radius, status, error, context, inputRef, onLocation, onEnabled, onRadius, onRetry,
+  gisKey, gisKeyIsOwn, onGisKey, hiddenCount, onShowHidden,
 }: {
   location: LatLng | undefined;
   enabled: boolean;
@@ -1050,7 +1188,18 @@ function SiteContextPanel({
   onEnabled: (v: boolean) => void;
   onRadius: (r: number) => void;
   onRetry: () => void;
+  gisKey: string;
+  gisKeyIsOwn: boolean;
+  onGisKey: (key: string) => void;
+  hiddenCount: number;
+  onShowHidden: () => void;
 }) {
+  const [keyDraft, setKeyDraft] = useState(gisKeyIsOwn ? gisKey : "");
+  useEffect(() => setKeyDraft(gisKeyIsOwn ? gisKey : ""), [gisKey, gisKeyIsOwn]);
+  const commitKey = () => {
+    const k = keyDraft.trim();
+    if (k !== (gisKeyIsOwn ? gisKey : "")) onGisKey(k);
+  };
   const [draft, setDraft] = useState(location ? formatLatLng(location) : "");
   const [invalid, setInvalid] = useState(false);
   useEffect(() => {
@@ -1174,6 +1323,45 @@ function SiteContextPanel({
             </button>
           </div>
         )}
+
+        <div className="panel">
+          <div className="px-3 py-2.5 grid gap-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[12.5px] font-medium text-ink-900">City view · 2GIS</span>
+              <span className="text-[11px] text-ink-500">
+                {gisKey ? (gisKeyIsOwn ? "Key saved in this browser" : "Using this site's key") : "No key yet"}
+              </span>
+            </div>
+            <input
+              className="cell-input font-mono !text-[12px]"
+              value={keyDraft}
+              placeholder={gisKey && !gisKeyIsOwn ? "Using this site's key — paste another to override" : "Paste your 2GIS key"}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setKeyDraft(e.target.value)}
+              onBlur={commitKey}
+              onKeyDown={(e) => e.key === "Enter" && commitKey()}
+              aria-label="2GIS key"
+            />
+            <p className="text-[11.5px] text-ink-500 leading-snug">
+              Shows the tower inside the real 3D Dubai — pick <strong>City</strong> in the viewer. A free demo key from{" "}
+              <a href="https://dev.2gis.com" target="_blank" rel="noreferrer" className="underline hover:text-ink-800">
+                dev.2gis.com
+              </a>{" "}
+              works for a month; a 2GIS subscription is needed in production.
+            </p>
+            {hiddenCount > 0 && (
+              <div className="flex items-center justify-between gap-2 text-[12px] text-ink-700">
+                <span>
+                  {hiddenCount} 2GIS building{hiddenCount === 1 ? "" : "s"} hidden on the plot
+                </span>
+                <button className="text-brand-700 hover:text-brand-900 font-medium" onClick={onShowHidden}>
+                  Show again
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
 
         <p className="text-[11.5px] text-ink-500 leading-snug">
           The plot centre goes on these coordinates, turned by True north above. Buildings standing on the plot are

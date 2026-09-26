@@ -51,6 +51,10 @@ something to show from the first click.
   buildings, streets and water come in from OpenStreetMap, within 250, 400 or 600 m: plain volumes around the
   designed tower, with their shadows in the sun study. Buildings standing on the plot are left out, neighbours
   in front of the tower turn see-through, and heights OSM doesn't have are shown at a typical value.
+- **City view (2GIS)** — the *City* style puts the designed tower inside the real 3D map of Dubai from 2GIS
+  (every building with its height, landmarks, streets and labels), on the plot's coordinates and turned by true
+  north. Click the buildings standing on the plot today to hide them; the presentation image works here too.
+  Needs a 2GIS key (below).
 - **Aerial view** — orbit, pan and zoom freely; one click flies back to the aerial view. Turntable rotation.
 - **Presentation mode** — full screen with the project title and headline figures, for client meetings.
 - **Presentation image** — a 2× PNG of the current view with a branded title bar and key figures.
@@ -170,6 +174,23 @@ accounts. Without these settings the app runs unchanged in local-only mode.
 6. Redeploy. The top bar gains a **Team password** input; once unlocked, every change to a cloud-tracked
    project auto-saves, and teammates see a project as read-only while someone else has it open.
 
+## City view (2GIS)
+
+The *City* style of the 3D viewer loads the 2GIS MapGL JS API and draws the scheme into it with a custom
+three.js layer. It needs a 2GIS key:
+
+- **Testing:** create a free demo key at [dev.2gis.com](https://dev.2gis.com) (valid for a month, limited
+  requests) and paste it in *3D Massing → Site → Location & surroundings*. It is stored in that browser only.
+- **Production:** buy a 2GIS subscription that includes the map (MapGL / Map Tiles API) and set the key for the
+  whole deployment at build time:
+
+  ```
+  NEXT_PUBLIC_2GIS_KEY=your-2gis-key
+  ```
+
+  A key typed in the app still overrides it in that browser. Keep the © 2GIS credit on the map and on exported
+  images (the app adds it).
+
 ## Surroundings (OpenStreetMap)
 
 The 3D surroundings are downloaded in the browser from the public Overpass API — no key and no cost, but the
@@ -190,7 +211,7 @@ The app is a fully static export — no server needed.
 
 1. In Netlify: **Add new site → Import from Git** → pick this repo and branch.
 2. `netlify.toml` is read automatically (build `npm run build`, publish `out/`, Node 20).
-3. Optional: add the cloud sync, Class Library and Overpass variables above in Site settings → Environment.
+3. Optional: add the cloud sync, Class Library, 2GIS and Overpass variables above in Site settings → Environment.
 4. Deploy.
 
 ## Adding new normatives

@@ -259,6 +259,8 @@ export interface Project {
   location?: { lat: number; lng: number };
   /** Neighbouring buildings, streets and water from OpenStreetMap in the 3D massing. */
   siteContext?: { enabled?: boolean; radiusM?: number };
+  /** 2GIS buildings hidden in the city view — the ones standing on the plot today. */
+  cityHiddenIds?: string[];
 }
 
 /** Tower façade concept of the designed façade. */

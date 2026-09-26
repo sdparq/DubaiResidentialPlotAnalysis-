@@ -6,7 +6,7 @@ import { isCounterClockwise, polygonBBox, pointToPolygonDistance } from "@/lib/g
 import { ACCENTS, GLASSES, type FacadeParams } from "@/lib/facade";
 import type { TowerFacadeStyle } from "@/lib/types";
 import { facadeGrid, filletPolygon, roofLayout, type Station } from "@/lib/facade-geometry";
-import { Instanced, bandGeometry, boxAt, cellRand, grow, prismGeometry, yawOf } from "./scene-kit";
+import { Instanced, bandGeometry, boxAt, cellRand, grow, instancedObject, prismGeometry, yawOf } from "./scene-kit";
 
 /*
  * Designed façades for the 3D massing: a Dubai residential tower (four
@@ -22,7 +22,7 @@ import { Instanced, bandGeometry, boxAt, cellRand, grow, prismGeometry, yawOf } 
 
 export type FacadeMaterialKind = "model" | "real";
 
-type MatKey =
+export type MatKey =
   | "glass"
   | "spandrel"
   | "slab"
@@ -37,7 +37,7 @@ type MatKey =
   | "podiumVoid"
   | "podiumBody";
 
-interface MatProps {
+export interface MatProps {
   color: string;
   roughness: number;
   metalness?: number;
@@ -100,7 +100,7 @@ interface Layer {
   colors?: THREE.Color[];
 }
 
-class Layers {
+export class Layers {
   list: Layer[] = [];
   private owned: THREE.BufferGeometry[] = [];
 
@@ -127,6 +127,14 @@ function useLayers(build: () => Layers, deps: unknown[]) {
   const layers = useMemo(build, deps);
   useEffect(() => () => layers.dispose(), [layers]);
   return layers;
+}
+
+/** The layers as plain three.js objects (for renderers outside React). */
+export function layersToObjects(layers: Layers, mats: Record<MatKey, MatProps>): THREE.Object3D[] {
+  return layers.list.flatMap((l) => {
+    const o = instancedObject({ matrices: l.matrices, geometry: l.geometry, colors: l.colors, ...mats[l.mat] });
+    return o ? [o] : [];
+  });
 }
 
 function RenderLayers({ layers, mats }: { layers: Layers; mats: Record<MatKey, MatProps> }) {
@@ -183,7 +191,7 @@ export function TowerFacade({ polygon, fromY, toY, floorHeight, floors: floorsIn
   return <RenderLayers layers={layers} mats={mats} />;
 }
 
-function buildTower(o: {
+export function buildTower(o: {
   polygon: Point[];
   fromY: number;
   toY: number;
@@ -346,7 +354,7 @@ export function LobbyFacade({
   return <RenderLayers layers={layers} mats={mats} />;
 }
 
-function buildLobby(polygon: Point[], fromY: number, toY: number, floors: number, plot: Point[]): Layers {
+export function buildLobby(polygon: Point[], fromY: number, toY: number, floors: number, plot: Point[]): Layers {
   const L = new Layers();
   const h = toY - fromY;
   if (polygon.length < 3 || h <= 0) return L;
@@ -431,7 +439,7 @@ export function PodiumFacade({
   return <RenderLayers layers={layers} mats={mats} />;
 }
 
-function buildPodium(
+export function buildPodium(
   polygon: Point[], fromY: number, toY: number, floorsIn: number | undefined,
   fins: boolean, spacing: number, width: number, depth: number,
 ): Layers {
