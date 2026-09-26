@@ -833,16 +833,16 @@ export default function MassingWalk(props: WalkProps) {
       )}
 
       {locked && verticals && (
-        <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/55 text-white/80 text-[11px] uppercase tracking-[0.14em] rounded-sm">
+        <div className="pointer-events-none absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/55 text-white/80 text-[12px] rounded-full">
           ⊥ Verticals corrected
         </div>
       )}
 
       {!locked && !aiOpen && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-          <div className="text-center text-bone-100 max-w-[460px] px-8">
-            <div className="text-[11px] uppercase tracking-[0.3em] text-bone-200/60 mb-2">Immersive walk</div>
-            <h2 className="text-2xl font-light mb-4">Virtual walk</h2>
+        <div className="absolute inset-0 flex items-center justify-center bg-ink-950/60 backdrop-blur-[2px]">
+          <div className="text-center text-white max-w-[480px] px-8 py-7 rounded-2xl bg-ink-900/80 ring-1 ring-white/10 shadow-2xl">
+            <div className="text-[12px] font-medium text-brand-200 mb-1">Immersive walk</div>
+            <h2 className="text-[26px] font-semibold tracking-tight mb-3">Walk the street, eye level</h2>
             <p className="text-[13px] text-bone-200/80 leading-relaxed mb-6">
               <strong>WASD</strong> to move · <strong>mouse</strong> to look · <strong>Shift</strong> to run
               <br />
@@ -852,20 +852,20 @@ export default function MassingWalk(props: WalkProps) {
             <div className="flex items-center justify-center gap-3 flex-wrap">
               <button
                 onClick={() => controlsRef.current?.lock()}
-                className="px-6 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] bg-brand-500 text-white hover:bg-brand-600 transition-colors"
+                className="btn btn-primary !px-5 !py-2.5"
               >
                 ▶ Enter
               </button>
               <button
                 onClick={() => void handleRender()}
-                className="px-6 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] border border-brand-400/60 text-brand-200 hover:bg-brand-500/20 transition-colors"
+                className="btn !px-5 !py-2.5 bg-white/10 text-brand-100 ring-1 ring-inset ring-brand-300/50 hover:bg-white/15"
                 title="Send the current view to Gemini as a hyperreal archviz render"
               >
                 ✦ Hyperreal render
               </button>
               <button
                 onClick={onExit}
-                className="px-6 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] border border-bone-100/30 text-bone-100 hover:bg-white/10 transition-colors"
+                className="btn !px-5 !py-2.5 bg-white/10 text-white hover:bg-white/20"
               >
                 Exit
               </button>
@@ -880,22 +880,22 @@ export default function MassingWalk(props: WalkProps) {
           {aiBusy ? (
             <div className="text-center text-bone-100">
               <div className="mx-auto w-10 h-10 border-2 border-brand-400 border-t-transparent rounded-full animate-spin mb-4" />
-              <div className="text-[12px] uppercase tracking-[0.2em] text-bone-200/70">
+              <div className="text-[13px] text-white/70">
                 Rendering with Gemini…
               </div>
             </div>
           ) : aiError ? (
             <div className="max-w-[520px] text-center text-bone-100">
-              <div className="text-[11px] uppercase tracking-[0.3em] text-red-300/80 mb-3">Render failed</div>
+              <div className="text-[14px] font-semibold text-red-300 mb-3">Render failed</div>
               <p className="text-[13px] text-bone-200/85 leading-relaxed whitespace-pre-wrap mb-6">{aiError}</p>
               <div className="flex items-center justify-center gap-3">
                 <button
                   onClick={() => void handleRender()}
-                  className="px-5 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] bg-brand-500 text-white hover:bg-brand-600 transition-colors"
+                  className="btn btn-primary"
                 >↻ Retry</button>
                 <button
                   onClick={() => setAiError(null)}
-                  className="px-5 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] border border-bone-100/30 text-bone-100 hover:bg-white/10 transition-colors"
+                  className="btn bg-white/10 text-white hover:bg-white/20"
                 >Close</button>
               </div>
             </div>
@@ -905,20 +905,20 @@ export default function MassingWalk(props: WalkProps) {
               <img
                 src={aiResult.img}
                 alt="Hyperreal AI render of the current view"
-                className="w-full h-auto max-h-[80vh] object-contain border border-white/15"
+                className="w-full h-auto max-h-[80vh] object-contain rounded-xl ring-1 ring-white/15"
               />
               <div className="flex items-center justify-end gap-3">
                 <button
                   onClick={downloadAiResult}
-                  className="px-5 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] border border-bone-100/30 text-bone-100 hover:bg-white/10 transition-colors"
+                  className="btn bg-white/10 text-white hover:bg-white/20"
                 >↓ Download PNG</button>
                 <button
                   onClick={() => void handleRender()}
-                  className="px-5 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] border border-brand-400/60 text-brand-200 hover:bg-brand-500/20 transition-colors"
+                  className="btn bg-white/10 text-brand-100 ring-1 ring-inset ring-brand-300/50 hover:bg-white/15"
                 >↻ Re-render</button>
                 <button
                   onClick={() => setAiResult(null)}
-                  className="px-5 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] bg-brand-500 text-white hover:bg-brand-600 transition-colors"
+                  className="btn btn-primary"
                 >Close</button>
               </div>
             </div>

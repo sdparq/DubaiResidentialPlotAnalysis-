@@ -1,24 +1,41 @@
 "use client";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PRODUCTION_CITY_SAMPLE } from "@/lib/sample";
+import { DEMO_SAMPLE } from "@/lib/sample";
 import { computeProgram } from "@/lib/calc/program";
 import { computeParking } from "@/lib/calc/parking";
 import { computeLifts } from "@/lib/calc/lifts";
+import { computeTowerYield } from "@/lib/calc/tower-yield";
+import { residentialSubPct } from "@/lib/calc/gfa";
+import { projectMetrics, type ProjectMetrics } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
-import { fmt0, fmt2, fmtPct } from "@/lib/format";
 import { BRAND } from "@/lib/brand";
+import { offsetPolygon, rectanglePlotPolygon, type Point } from "@/lib/geom";
+import type { Volume } from "@/lib/massing";
+import type { Project } from "@/lib/types";
+import type { FacadeParams } from "@/components/massing-scene";
+import { dubaiSun, formatClock } from "@/lib/sun";
+import { BrandMark } from "@/components/shell/brand-mark";
+
+const MassingScene = dynamic(() => import("@/components/massing-scene"), { ssr: false });
 
 /**
- * Scripted promo of the plot-analysis app, using the real Production City
- * sample as the example. All KPIs in the scenes are computed from the sample —
- * not invented — so the demo matches what you see when you run the app.
- *
- * Auto-advances scene by scene. Record the page with a screen capture tool
- * (QuickTime, Loom, OBS, OS shortcut) to produce a video.
+ * Scripted promo of the app, played on the demo scheme that ships with it
+ * (lib/sample.ts). Every figure is computed live from that project with the
+ * same calculation modules the app uses, and the 3D scene is the real viewer —
+ * nothing here is mocked up. Record the page with any screen recorder.
  */
 
-type Render = (p: { t: number; data: SampleData }) => React.ReactNode;
+type SceneData = {
+  project: Project;
+  program: ReturnType<typeof computeProgram>;
+  parking: ReturnType<typeof computeParking>;
+  lifts: ReturnType<typeof computeLifts>;
+  tower: ReturnType<typeof computeTowerYield>;
+  metrics: ProjectMetrics;
+};
+type Render = (p: { t: number; data: SceneData }) => React.ReactElement | null;
 interface Scene {
   id: string;
   durationMs: number;
@@ -26,39 +43,119 @@ interface Scene {
   render: Render;
 }
 
-interface SampleData {
-  project: typeof PRODUCTION_CITY_SAMPLE;
-  program: ReturnType<typeof computeProgram>;
-  parking: ReturnType<typeof computeParking>;
-  lifts: ReturnType<typeof computeLifts>;
-}
-
 const ease = (x: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const n0 = (n: number) => Math.round(n).toLocaleString("en-US");
+const reveal = (t: number, start: number, span = 0.2) => ease(clamp01((t - start) / span));
 
 /* -------------------------------------------------------------------------- */
-/*                                   Scenes                                   */
+/*                                 Building                                   */
 /* -------------------------------------------------------------------------- */
 
-function HeroScene({ t, data }: { t: number; data: SampleData }) {
-  const opacity = ease(t * 1.5);
+/** The demo's 3D model — same stratification rules as the 3D Massing step. */
+function demoModel(p: Project) {
+  const plot = rectanglePlotPolygon(p.plotFrontage ?? 50, p.plotDepth ?? 50);
+  const inset = (d: number): Point[] => (d > 0 ? offsetPolygon(plot, plot.map(() => d)) : plot);
+  const tiers = {
+    basement: p.basements ?? { count: 0, heightM: 3 },
+    ground: p.ground ?? { count: 1, heightM: 4.5 },
+    podium: p.podium ?? { count: 0, heightM: 4 },
+    tower: p.typeFloors ?? { count: p.numFloors, heightM: p.floorHeight },
+  };
+  const volumes: Volume[] = [];
+  if (tiers.basement.count > 0) {
+    volumes.push({ polygon: plot, fromY: -tiers.basement.count * tiers.basement.heightM, toY: 0, kind: "basement" });
+  }
+  let y = 0;
+  for (const [kind, setback] of [
+    ["ground", p.groundSetbackM ?? 0],
+    ["podium", p.podiumSetbackM ?? 0],
+    ["tower", p.towerSetbackM ?? 0],
+  ] as const) {
+    const h = tiers[kind].count * tiers[kind].heightM;
+    if (h <= 0) continue;
+    volumes.push({ polygon: inset(setback), fromY: y, toY: y + h, kind });
+    y += h;
+  }
+  const f = p.facade ?? {};
+  const facade: FacadeParams = {
+    mode: f.mode ?? "massing",
+    panelWidthM: f.panelWidthM ?? 3.2,
+    balconyDepthM: f.balconyDepthM ?? 1.8,
+    balconyEveryNBays: f.balconyEveryNBays ?? 2,
+    solidPanelRatio: f.solidPanelRatio ?? 0.25,
+    balconyLayout: f.balconyLayout ?? "rhythm",
+    patternSeed: f.patternSeed ?? 1,
+    groundPodiumTreatment: f.groundPodiumTreatment ?? "massing",
+    finSpacingM: f.finSpacingM ?? 1,
+    finWidthM: f.finWidthM ?? 0.15,
+    finDepthM: f.finDepthM ?? 0.35,
+    podiumPool: f.podiumPool ?? false,
+    podiumLoungeBbq: f.podiumLoungeBbq ?? false,
+  };
+  return { plot, tower: inset(p.towerSetbackM ?? 0), volumes, facade, floorHeight: tiers.tower.heightM };
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Pieces                                    */
+/* -------------------------------------------------------------------------- */
+
+function StepTag({ n, label }: { n: string; label: string }) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-bone-100 to-bone-200">
-      <div className="absolute inset-0 opacity-[0.05]" style={{
-        backgroundImage: "linear-gradient(0deg, transparent 95%, #647d57 95%), linear-gradient(90deg, transparent 95%, #647d57 95%)",
-        backgroundSize: "40px 40px",
-      }} />
-      <div className="text-center relative z-10" style={{ opacity, transform: `translateY(${(1 - opacity) * 12}px)` }}>
-        <div className="eyebrow text-brand-700 mb-4" style={{ letterSpacing: "0.4em" }}>
-          {BRAND.wordmark} · {BRAND.market}
-        </div>
-        <h1 className="text-6xl md:text-7xl font-light text-ink-900 tracking-tight mb-3">
-          Plot Analysis
+    <div className="inline-flex items-center gap-2 text-[13px] font-medium">
+      <span className="px-2.5 py-0.5 rounded-full bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-200">Step {n}</span>
+      <span className="text-ink-500">{label}</span>
+    </div>
+  );
+}
+
+function Stage({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-bone-50 to-bone-200 p-10">
+      {children}
+    </div>
+  );
+}
+
+function Tile({ label, value, sub, t, delay }: { label: string; value: string; sub?: string; t: number; delay: number }) {
+  const k = reveal(t, delay, 0.18);
+  return (
+    <div
+      className="rounded-xl bg-white ring-1 ring-inset ring-ink-200/80 shadow-card p-4"
+      style={{ opacity: k, transform: `translateY(${(1 - k) * 12}px)` }}
+    >
+      <div className="text-[13px] font-medium text-ink-500">{label}</div>
+      <div className="text-[28px] font-semibold tracking-tight text-ink-900 mt-0.5">{value}</div>
+      {sub && <div className="text-[12.5px] text-ink-500 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Scenes                                    */
+/* -------------------------------------------------------------------------- */
+
+function HeroScene({ t, data }: { t: number; data: SceneData }) {
+  const k = ease(t * 1.6);
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-ink-900 text-white overflow-hidden">
+      <div
+        className="absolute inset-0 opacity-[0.07]"
+        style={{
+          backgroundImage: "linear-gradient(0deg, transparent 96%, #2a9d84 96%), linear-gradient(90deg, transparent 96%, #2a9d84 96%)",
+          backgroundSize: "44px 44px",
+        }}
+      />
+      <div className="relative text-center" style={{ opacity: k, transform: `translateY(${(1 - k) * 14}px)` }}>
+        <BrandMark className="w-16 h-16 mx-auto mb-6" />
+        <div className="wordmark text-[15px] text-brand-200 mb-4">{BRAND.wordmark}</div>
+        <h1 className="text-[56px] leading-[1.05] font-semibold tracking-tight">
+          A residential plot,
+          <br />
+          fully studied in minutes.
         </h1>
-        <p className="text-lg text-ink-500 max-w-xl mx-auto leading-relaxed mb-6">
-          A residential plot, fully analysed in minutes.
-        </p>
-        <div className="text-[11px] uppercase tracking-[0.30em] text-ink-400">
+        <p className="text-[18px] text-white/65 mt-5">{BRAND.tagline}</p>
+        <div className="mt-8 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-[13px] text-white/80">
           Live example · {data.project.name}
         </div>
       </div>
@@ -66,588 +163,330 @@ function HeroScene({ t, data }: { t: number; data: SampleData }) {
   );
 }
 
-function SetupScene({ t, data }: { t: number; data: SampleData }) {
+function PlotScene({ t, data }: { t: number; data: SceneData }) {
   const p = data.project;
-  const lines = [
-    { k: "Project", v: p.name },
-    { k: "Zone", v: p.zone },
-    { k: "Plot area", v: `${fmt2(p.plotArea)} m²` },
-    { k: "Frontage × Depth", v: `${fmt2(p.plotFrontage ?? 0)} × ${fmt2(p.plotDepth ?? 0)} m` },
-    { k: "Floors", v: `${p.numFloors}` },
-    { k: "Floor height", v: `${p.floorHeight.toFixed(2)} m` },
-    { k: "Setbacks (G / P / T)", v: `${p.groundSetbackM ?? 0} / ${p.podiumSetbackM ?? 0} / ${p.towerSetbackM ?? 0} m` },
+  const W = 620;
+  const H = 400;
+  const fw = p.plotFrontage ?? 64;
+  const fd = p.plotDepth ?? 50;
+  const s = Math.min((W - 160) / fw, (H - 120) / fd);
+  const x0 = (W - fw * s) / 2;
+  const y0 = (H - fd * s) / 2;
+  const verts: [number, number][] = [[x0, y0], [x0 + fw * s, y0], [x0 + fw * s, y0 + fd * s], [x0, y0 + fd * s]];
+  const draw = ease(t * 1.6);
+  const shown = Math.min(4, Math.floor(draw * 5));
+  let d = "";
+  for (let i = 0; i < shown; i++) d += (i === 0 ? "M" : "L") + verts[i].join(",");
+  const closed = draw >= 1;
+  if (closed) d += " Z";
+  const sb = (p.towerSetbackM ?? 0) * s;
+  const k = reveal(t, 0.55, 0.3);
+  return (
+    <Stage>
+      <div className="grid grid-cols-[1fr_300px] gap-8 items-center w-full max-w-[1000px]">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full rounded-2xl bg-white shadow-lift ring-1 ring-ink-200/60">
+          <defs>
+            <pattern id="demo-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+              <path d="M20 0H0V20" fill="none" stroke="#eef1f5" strokeWidth="1" />
+            </pattern>
+          </defs>
+          <rect width={W} height={H} fill="url(#demo-grid)" />
+          <path d={d} fill={closed ? "rgba(235,104,52,0.10)" : "none"} stroke="#e34948" strokeWidth="2.5" strokeLinejoin="round" />
+          {verts.slice(0, shown).map((v, i) => (
+            <circle key={i} cx={v[0]} cy={v[1]} r={5} fill="#fff" stroke="#e34948" strokeWidth="2" />
+          ))}
+          {closed && (
+            <g style={{ opacity: k }}>
+              <rect
+                x={x0 + sb}
+                y={y0 + sb}
+                width={fw * s - 2 * sb}
+                height={fd * s - 2 * sb}
+                fill="rgba(13,127,105,0.12)"
+                stroke="#0d7f69"
+                strokeDasharray="6 4"
+                strokeWidth="1.8"
+              />
+              <text x={W / 2} y={y0 - 14} textAnchor="middle" fontSize="13" fill="#5a6479">{fw.toFixed(2)} m</text>
+              <text x={x0 - 12} y={H / 2} textAnchor="end" fontSize="13" fill="#5a6479">{fd.toFixed(2)} m</text>
+              <text x={W / 2} y={H / 2 + 6} textAnchor="middle" fontSize="18" fontWeight="600" fill="#0b1324">{n0(p.plotArea)} m²</text>
+            </g>
+          )}
+        </svg>
+        <div className="grid gap-4">
+          <StepTag n="01" label="Site" />
+          <h2 className="text-[34px] leading-tight font-semibold tracking-tight text-ink-900">Drop the affection plan</h2>
+          <ul className="grid gap-2 text-[15px] text-ink-600">
+            {["Parcel boundary detected from the plan colours", "Scale read from the printed dimensions", "Plot area and footprints for the 3D model"].map((x, i) => (
+              <li key={x} className="flex items-start gap-2" style={{ opacity: reveal(t, 0.2 + i * 0.15) }}>
+                <span className="mt-2 w-1.5 h-1.5 rounded-full bg-brand-500 shrink-0" />
+                {x}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </Stage>
+  );
+}
+
+function SetupScene({ t, data }: { t: number; data: SceneData }) {
+  const p = data.project;
+  const m = data.metrics;
+  const lines: [string, string][] = [
+    ["Zone", `${p.zone} · market class C`],
+    ["Plot area", `${n0(p.plotArea)} m²`],
+    ["Target GFA", `${n0(p.targetGFA ?? 0)} m² · FAR ${m.far?.toFixed(1) ?? "—"}`],
+    ["Uses", "95% residential · 5% retail"],
+    ["Base", `${m.basements} basements · ground · ${m.podium} podium levels`],
   ];
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3 w-[600px]">
-        <div className="eyebrow text-ink-500">Tab 01 · Setup</div>
-        <div className="border border-ink-200 bg-white shadow-sm divide-y divide-ink-100">
-          {lines.map((l, i) => {
-            const start = 0.05 + i * 0.10;
-            const local = clamp01((t - start) / 0.18);
-            const reveal = Math.floor(local * l.v.length);
+    <Stage>
+      <div className="w-full max-w-[760px] grid gap-5">
+        <StepTag n="02" label="Project setup" />
+        <div className="rounded-2xl bg-white shadow-lift ring-1 ring-ink-200/60 divide-y divide-ink-100">
+          {lines.map(([k, v], i) => {
+            const local = clamp01((t - 0.06 - i * 0.13) / 0.16);
+            const chars = Math.floor(local * v.length);
             return (
-              <div key={l.k} className="grid grid-cols-[200px_1fr] px-4 py-2.5 items-baseline">
-                <span className="text-[11px] uppercase tracking-[0.10em] text-ink-500">{l.k}</span>
-                <span className="text-[14px] text-ink-900 tabular-nums font-light">
-                  {l.v.slice(0, reveal)}
-                  {reveal > 0 && reveal < l.v.length && <span className="opacity-60">▍</span>}
+              <div key={k} className="grid grid-cols-[170px_1fr] px-6 py-4 items-baseline">
+                <span className="text-[14px] font-medium text-ink-500">{k}</span>
+                <span className="text-[19px] font-semibold text-ink-900">
+                  {v.slice(0, chars)}
+                  {chars > 0 && chars < v.length && <span className="opacity-50">▍</span>}
                 </span>
               </div>
             );
           })}
         </div>
       </div>
-    </div>
+    </Stage>
   );
 }
 
-function PlotScene({ t }: { t: number }) {
-  // Real Production City plot is 80 × 84.55 m (rectangle); show it on a faux blueprint.
-  const verts: [number, number][] = [
-    [110, 80], [510, 80], [510, 320], [110, 320],
-  ];
-  const total = verts.length;
-  const shown = Math.min(total, Math.floor(ease(t * 1.4) * (total + 1)));
-  const closed = ease(t * 1.4) >= 1;
-  let d = "";
-  for (let i = 0; i < shown; i++) d += (i === 0 ? "M" : "L") + verts[i].join(",");
-  if (closed) d += " Z";
-
-  const sb = ease(clamp01((t - 0.55) / 0.4));
+function DistributionScene({ t, data }: { t: number; data: SceneData }) {
+  const y = data.tower;
+  const floors = Math.round(y.towerFloors * ease(clamp01((t - 0.35) / 0.4)));
+  const apt = residentialSubPct(data.project, "apartments");
+  const amen = residentialSubPct(data.project, "amenities");
+  const circ = Math.max(0, 100 - apt - amen);
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3" style={{ opacity: ease(Math.min(1, t * 5)) }}>
-        <div className="flex items-baseline gap-3">
-          <span className="eyebrow text-ink-500">Tab 00 · Plot</span>
-          <span className="text-[11px] text-ink-400">Production City · IMPZ</span>
+    <Stage>
+      <div className="w-full max-w-[900px] grid gap-7">
+        <StepTag n="03" label="GFA distribution" />
+        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-4 text-center">
+          <Tile label="Residential GFA" value={`${n0(y.towerTargetGFA)} m²`} t={t} delay={0.05} />
+          <span className="text-[34px] text-ink-300">÷</span>
+          <Tile label="Tower floor plate" value={`${n0(y.towerFootprintM2)} m²`} t={t} delay={0.18} />
+          <span className="text-[34px] text-ink-300">=</span>
+          <div className="rounded-xl bg-brand-600 text-white shadow-lift p-4" style={{ opacity: reveal(t, 0.3) }}>
+            <div className="text-[13px] font-medium text-white/70">Tower floors</div>
+            <div className="text-[44px] font-semibold tracking-tight leading-tight">{floors}</div>
+          </div>
         </div>
-        <svg width="640" height="400" viewBox="0 0 640 400" className="border border-ink-200 bg-white shadow-sm">
-          <defs>
-            <pattern id="diag" patternUnits="userSpaceOnUse" width="14" height="14" patternTransform="rotate(45)">
-              <rect width="14" height="14" fill="#fbf9f3" />
-              <line x1="0" y1="0" x2="0" y2="14" stroke="#eee9d8" strokeWidth="1" />
-            </pattern>
-          </defs>
-          <rect x="0" y="0" width="640" height="400" fill="url(#diag)" />
-          <path d={d} fill={closed ? "rgba(100,125,87,0.16)" : "none"} stroke="#647d57" strokeWidth="2.4" strokeLinejoin="round" />
-          {verts.slice(0, shown).map((p, i) => (
-            <circle key={i} cx={p[0]} cy={p[1]} r={4.5} fill="#fff" stroke="#647d57" strokeWidth="2" />
-          ))}
-          {/* Buildable polygon (after setbacks) */}
-          {closed && (
-            <rect
-              x={110 + 24}
-              y={80 + 14}
-              width={400 - 24 - 14}
-              height={240 - 14 - 14}
-              fill="rgba(155,180,135,0.22)"
-              stroke="#7a9468"
-              strokeDasharray="4 3"
-              strokeWidth="1.5"
-              style={{ opacity: sb }}
-            />
-          )}
-          {closed && (
-            <g style={{ opacity: ease(clamp01((t - 0.7) / 0.3)) }}>
-              <text x="310" y="208" textAnchor="middle" fill="#33422e" fontSize="15" fontFamily="ui-monospace, monospace">6,764.31 m²</text>
-              <text x="310" y="226" textAnchor="middle" fill="#647d57" fontSize="11" fontFamily="ui-monospace, monospace">80 × 84.55 m · setbacks 6 / 3 / 3</text>
-            </g>
-          )}
-        </svg>
-        <p className="text-[12px] text-ink-500 max-w-[640px] leading-relaxed">
-          Trace the parcel from a PDF or aerial drawing, set a 2-point scale,
-          and the buildable area is offset automatically per edge.
-        </p>
+        <div style={{ opacity: reveal(t, 0.55) }}>
+          <div className="flex h-4 gap-[2px]">
+            <div className="rounded-l-full" style={{ flexGrow: apt, background: "#1baf7a" }} />
+            <div style={{ flexGrow: amen, background: "#eb6834" }} />
+            <div className="rounded-r-full" style={{ flexGrow: circ, background: "#2a78d6" }} />
+          </div>
+          <div className="mt-3 flex gap-6 text-[14px] text-ink-600">
+            <span><b className="text-ink-900">Apartments</b> {apt.toFixed(0)}%</span>
+            <span><b className="text-ink-900">Amenities</b> {amen.toFixed(0)}%</span>
+            <span><b className="text-ink-900">Circulation</b> {circ.toFixed(0)}%</span>
+          </div>
+        </div>
       </div>
-    </div>
+    </Stage>
   );
 }
 
-function TypologiesScene({ t, data }: { t: number; data: SampleData }) {
-  const rows = data.project.typologies;
+const MIX_COLORS = ["#5fbaa4", "#2a9d84", "#0d7f69", "#0a584a", "#0a473d"];
+
+function TypologiesScene({ t, data }: { t: number; data: SceneData }) {
+  const rows = data.program.byTypology;
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3 w-[760px]">
-        <div className="eyebrow text-ink-500">Tab 02 · Typologies</div>
-        <div className="border border-ink-200 bg-white shadow-sm">
-          <div className="grid grid-cols-[1fr_70px_90px_90px_90px_90px] px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
-            <div>Name</div>
-            <div className="text-right">Cat.</div>
+    <Stage>
+      <div className="w-full max-w-[900px] grid gap-5">
+        <StepTag n="04" label="Typologies & unit mix" />
+        <div className="rounded-2xl bg-white shadow-lift ring-1 ring-ink-200/60 overflow-hidden">
+          <div className="grid grid-cols-[1fr_120px_120px_120px] px-6 py-3 bg-bone-50 text-[12px] font-semibold uppercase tracking-[0.05em] text-ink-500">
+            <div>Typology</div>
             <div className="text-right">Interior</div>
             <div className="text-right">Balcony</div>
-            <div className="text-right">Occ.</div>
-            <div className="text-right">Pkg / unit</div>
+            <div className="text-right">Share</div>
           </div>
-          {rows.map((r, i) => {
-            const local = ease(clamp01((t - i * 0.075) / 0.18));
-            return (
-              <div
-                key={r.id}
-                className="grid grid-cols-[1fr_70px_90px_90px_90px_90px] px-3 py-1.5 text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
-                style={{ opacity: local, transform: `translateY(${(1 - local) * 6}px)` }}
-              >
-                <div className="text-ink-900">{r.name}</div>
-                <div className="text-right text-ink-500">{r.category}</div>
-                <div className="text-right text-ink-700">{r.internalArea} m²</div>
-                <div className="text-right text-ink-500">{r.balconyArea} m²</div>
-                <div className="text-right text-ink-500">{r.occupancy}</div>
-                <div className="text-right text-ink-700">{r.parkingPerUnit}</div>
-              </div>
-            );
-          })}
-        </div>
-        <p className="text-[12px] text-ink-500">
-          {rows.length} unit types · Studio + 1BR (4) + 2BR (4) + 3BR (1) — fully editable per project.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function ProgramScene({ t, data }: { t: number; data: SampleData }) {
-  const ts = data.project.typologies;
-  const tIds = ts.map((x) => x.id);
-  const numFloors = data.project.numFloors;
-  const cellsByFloorTypology = new Map<string, number>();
-  for (const c of data.project.program) {
-    cellsByFloorTypology.set(`${c.floor}-${c.typologyId}`, c.count);
-  }
-
-  // Reveal cells row-by-row top to bottom (from floor 8 down to 1).
-  const totalCells = numFloors * tIds.length;
-  const revealed = Math.floor(ease(t * 1.05) * totalCells);
-  const totalsByT = tIds.map((tid, ti) => {
-    let s = 0;
-    for (let fi = 0; fi < numFloors; fi++) {
-      const cellIdx = fi * tIds.length + ti;
-      if (cellIdx < revealed) s += cellsByFloorTypology.get(`${numFloors - fi}-${tid}`) ?? 0;
-    }
-    return s;
-  });
-  const grandTotal = totalsByT.reduce((a, b) => a + b, 0);
-
-  return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3">
-        <div className="eyebrow text-ink-500">Tab 03 · Program</div>
-        <div className="border border-ink-200 bg-white shadow-sm">
-          <div
-            className="grid text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200"
-            style={{ gridTemplateColumns: `52px repeat(${tIds.length}, 56px) 60px` }}
-          >
-            <div className="px-2 py-1.5">Fl</div>
-            {ts.map((typo) => (
-              <div key={typo.id} className="px-1 py-1.5 text-center" title={typo.name}>
-                {typo.name.replace("Type ", "").replace("Studio ", "ST ")}
-              </div>
-            ))}
-            <div className="px-2 py-1.5 text-right">Total</div>
-          </div>
-          {Array.from({ length: numFloors }).map((_, fi) => {
-            const floor = numFloors - fi;
-            const rowTotal = ts.reduce((s, typo, ti) => {
-              const cellIdx = fi * tIds.length + ti;
-              if (cellIdx >= revealed) return s;
-              return s + (cellsByFloorTypology.get(`${floor}-${typo.id}`) ?? 0);
-            }, 0);
-            return (
-              <div
-                key={fi}
-                className="grid text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
-                style={{ gridTemplateColumns: `52px repeat(${tIds.length}, 56px) 60px` }}
-              >
-                <div className="px-2 py-1 text-ink-500">{floor}</div>
-                {ts.map((typo, ti) => {
-                  const cellIdx = fi * tIds.length + ti;
-                  const v = cellsByFloorTypology.get(`${floor}-${typo.id}`) ?? 0;
-                  const visible = cellIdx < revealed;
-                  return (
-                    <div
-                      key={typo.id}
-                      className="px-1 py-1 text-center"
-                      style={{
-                        opacity: visible ? 1 : 0,
-                        background: visible && v > 0 ? "#f0f4ec" : "transparent",
-                        color: v === 0 ? "#9ca09b" : "#33422e",
-                        transition: "opacity 200ms",
-                      }}
-                    >
-                      {v || "·"}
-                    </div>
-                  );
-                })}
-                <div className="px-2 py-1 text-right text-ink-700 font-medium">{rowTotal || "·"}</div>
-              </div>
-            );
-          })}
-          <div
-            className="grid text-[12px] tabular-nums bg-brand-50 font-medium"
-            style={{ gridTemplateColumns: `52px repeat(${tIds.length}, 56px) 60px` }}
-          >
-            <div className="px-2 py-1.5 text-brand-800 uppercase text-[10.5px] tracking-[0.10em]">Σ</div>
-            {totalsByT.map((tt, i) => (
-              <div key={i} className="px-1 py-1.5 text-center text-brand-800">{tt}</div>
-            ))}
-            <div className="px-2 py-1.5 text-right text-brand-800">{grandTotal}</div>
-          </div>
-        </div>
-        <p className="text-[12px] text-ink-500">
-          {data.program.totalUnits} units across {numFloors} floors · {fmt2(data.program.totalInteriorGFA)} m² interior GFA.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function CommonAreasScene({ t, data }: { t: number; data: SampleData }) {
-  const sample = data.project.commonAreas.slice(0, 12);
-  return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3 w-[760px]">
-        <div className="eyebrow text-ink-500">Tab 04 · Common areas</div>
-        <div className="border border-ink-200 bg-white shadow-sm">
-          <div className="grid grid-cols-[1fr_60px_70px_90px] px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
-            <div>Name</div>
-            <div className="text-center">Floors</div>
-            <div className="text-right">Area / fl</div>
-            <div className="text-right">Counts as</div>
-          </div>
-          {sample.map((c, i) => {
-            const local = ease(clamp01((t - i * 0.06) / 0.16));
-            const cat = c.countAsGFA === false ? "OPEN" : "GFA";
-            return (
-              <div
-                key={c.id}
-                className="grid grid-cols-[1fr_60px_70px_90px] px-3 py-1 text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
-                style={{ opacity: local, transform: `translateX(${(1 - local) * -10}px)` }}
-              >
-                <div className="text-ink-900 truncate">{c.name}</div>
-                <div className="text-center text-ink-500">{c.floors}</div>
-                <div className="text-right text-ink-700">{c.area} m²</div>
-                <div className="text-right">
-                  <span className={`px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] ${cat === "GFA" ? "bg-brand-100 text-brand-800" : "bg-bone-200 text-ink-700"}`}>
-                    {cat}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-          <div className="grid grid-cols-[1fr_60px_70px_90px] px-3 py-1.5 text-[12px] tabular-nums bg-brand-50 font-medium">
-            <div className="text-brand-800 uppercase text-[10.5px] tracking-[0.10em]">Total</div>
-            <div></div>
-            <div className="text-right text-brand-800">{fmt0(data.program.commonAreasGFA + data.program.commonAreasBUAonly + data.program.commonAreasOpen)} m²</div>
-            <div className="text-right text-brand-800 text-[10.5px]">22 rows</div>
-          </div>
-        </div>
-        <p className="text-[12px] text-ink-500">
-          Lobbies, corridors, lifts, MEP, gym, pools, BBQ, yoga, club house — each counted as <strong>GFA</strong>, <strong>BUA-only</strong> or <strong>OPEN</strong>.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function MassingScene({ t, data }: { t: number; data: SampleData }) {
-  const floors = data.project.numFloors;
-  const visible = Math.min(floors, Math.floor(ease(t * 1.5) * floors) + 1);
-  const yaw = -30 + ease(Math.max(0, (t - 0.4) / 0.6)) * 30;
-  return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-100 overflow-hidden">
-      <div className="absolute inset-0" style={{
-        background: "radial-gradient(circle at 50% 30%, #f3efe2 0%, #d9d4c0 100%)",
-      }} />
-      <div
-        className="relative"
-        style={{
-          width: 320,
-          height: 320,
-          transformStyle: "preserve-3d",
-          transform: `perspective(1400px) rotateX(58deg) rotateZ(${yaw}deg)`,
-          transition: "transform 60ms linear",
-        }}
-      >
-        <div className="absolute inset-0 border border-ink-300/70 bg-bone-50/40" />
-        {Array.from({ length: visible }).map((_, i) => {
-          const sizeBase = 220;
-          const w = sizeBase - Math.max(0, i - 6) * 18;
-          return (
+          {rows.map((r, i) => (
             <div
-              key={i}
-              className="absolute"
-              style={{
-                left: "50%",
-                top: "50%",
-                width: w,
-                height: w * 0.86,
-                transform: `translate3d(-50%, -50%, ${i * 18}px)`,
-                background: "#647d57",
-                border: "1px solid #33422e",
-                opacity: 0.96,
-                boxShadow: i === visible - 1 ? "0 4px 18px rgba(0,0,0,0.18)" : "none",
-              }}
+              key={r.typology.id}
+              className="grid grid-cols-[1fr_120px_120px_120px] px-6 py-3 border-t border-ink-100 text-[16px] items-center"
+              style={{ opacity: reveal(t, 0.08 + i * 0.1, 0.15) }}
+            >
+              <div className="flex items-center gap-3 font-semibold text-ink-900">
+                <span className="w-3 h-3 rounded-sm" style={{ background: MIX_COLORS[i % MIX_COLORS.length] }} />
+                {r.typology.name}
+              </div>
+              <div className="text-right text-ink-600 tabular-nums">{r.typology.internalArea} m²</div>
+              <div className="text-right text-ink-600 tabular-nums">{r.typology.balconyArea} m²</div>
+              <div className="text-right font-semibold tabular-nums">{(r.pctOfTotal * 100).toFixed(0)}%</div>
+            </div>
+          ))}
+        </div>
+        <div className="flex h-4 gap-[2px]" style={{ opacity: reveal(t, 0.6) }}>
+          {rows.map((r, i) => (
+            <div
+              key={r.typology.id}
+              className={`${i === 0 ? "rounded-l-full" : ""} ${i === rows.length - 1 ? "rounded-r-full" : ""}`}
+              style={{ flexGrow: r.totalUnits, background: MIX_COLORS[i % MIX_COLORS.length] }}
             />
-          );
-        })}
+          ))}
+        </div>
       </div>
-      <div className="absolute top-6 left-6 grid gap-1 text-ink-700">
-        <div className="eyebrow text-ink-500">Tab 08 · Massing 3D</div>
-        <div className="text-[15px] font-medium">{visible} floors · {(visible * data.project.floorHeight).toFixed(1)} m</div>
-        <div className="text-[11px] text-ink-500 tabular-nums">Floor area ≈ {fmt0(data.program.totalGFABuilding / data.project.numFloors)} m² · FAR {data.program.far.toFixed(2)}</div>
-      </div>
-      <div className="absolute bottom-6 left-6 right-6 flex items-center gap-2 flex-wrap">
-        {(["Block", "Podium", "Courtyard", "Twin", "Stepped", "L-shape", "U-shape"] as const).map((s, i) => (
-          <div
-            key={s}
-            className={`px-2 py-1 text-[10.5px] uppercase tracking-[0.10em] border ${i === 0 ? "bg-brand-500 text-white border-brand-500" : "border-ink-300 text-ink-700 bg-white"}`}
-            style={{ opacity: ease(Math.min(1, (t - 0.55 - i * 0.04) * 6)) }}
-          >{s}</div>
-        ))}
-      </div>
-    </div>
+    </Stage>
   );
 }
 
-function ContextScene({ t }: { t: number }) {
-  const neighbors: { x: number; y: number; w: number; h: number; tower?: number }[] = [
-    { x: 60, y: 60, w: 120, h: 90 },
-    { x: 220, y: 50, w: 110, h: 70, tower: 60 },
-    { x: 360, y: 60, w: 130, h: 110, tower: 80 },
-    { x: 520, y: 70, w: 90, h: 100 },
-    { x: 70, y: 200, w: 110, h: 110, tower: 50 },
-    { x: 360, y: 220, w: 130, h: 90 },
-    { x: 530, y: 210, w: 90, h: 100 },
-    { x: 70, y: 350, w: 130, h: 80 },
-    { x: 230, y: 360, w: 110, h: 70 },
-    { x: 380, y: 360, w: 130, h: 90 },
-    { x: 540, y: 360, w: 90, h: 80 },
-  ];
-  const heroOpacity = ease(Math.max(0, (t - 0.55) / 0.4));
+function ApartmentsScene({ t, data }: { t: number; data: SceneData }) {
+  const ts = data.project.typologies;
+  // Consecutive floors with the same mix read as one band.
+  const bands: { from: number; to: number; counts: number[] }[] = [];
+  for (let f = 1; f <= data.project.numFloors; f++) {
+    const counts = ts.map((ty) => data.project.program.find((c) => c.floor === f && c.typologyId === ty.id)?.count ?? 0);
+    const last = bands[bands.length - 1];
+    if (last && last.counts.join() === counts.join()) last.to = f;
+    else bands.push({ from: f, to: f, counts });
+  }
+  const shownUnits = Math.round(data.program.totalUnits * ease(clamp01((t - 0.2) / 0.55)));
+  const cols = `140px repeat(${ts.length}, 1fr) 90px`;
   return (
-    <div className="absolute inset-0 flex items-center justify-center" style={{
-      background: "linear-gradient(180deg, #b9c8d3 0%, #d6dde1 100%)",
-    }}>
-      <div className="relative" style={{
-        width: 700, height: 460,
-        transformStyle: "preserve-3d",
-        transform: "perspective(1400px) rotateX(56deg) rotateZ(-22deg)",
-      }}>
-        <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #d8d7cb 0%, #c4c2b3 100%)" }} />
-        <div className="absolute" style={{ left: 0, top: 175, width: "100%", height: 14, background: "#aaa9a0" }} />
-        <div className="absolute" style={{ left: 0, top: 325, width: "100%", height: 12, background: "#aaa9a0" }} />
-        <div className="absolute" style={{ left: 195, top: 0, width: 14, height: "100%", background: "#aaa9a0" }} />
-        <div className="absolute" style={{ left: 510, top: 0, width: 14, height: "100%", background: "#aaa9a0" }} />
-        {neighbors.map((n, i) => {
-          const localStart = 0.04 + i * 0.04;
-          const local = ease(clamp01((t - localStart) / 0.25));
-          return (
-            <div key={i} style={{ position: "absolute", left: n.x, top: n.y, width: n.w, height: n.h, opacity: local }}>
-              <div className="absolute inset-0" style={{ background: "#f3f1ec", border: "1px solid #aeada6", transform: `translateZ(${24 * local}px)` }} />
-              {n.tower && (
-                <div style={{ position: "absolute", left: "20%", top: "20%", width: "60%", height: "60%", background: "#e9e6dc", border: "1px solid #aeada6", transform: `translateZ(${(24 + n.tower) * local}px)` }} />
-              )}
+    <Stage>
+      <div className="grid grid-cols-[1fr_260px] gap-8 items-center w-full max-w-[1000px]">
+        <div className="rounded-2xl bg-white shadow-lift ring-1 ring-ink-200/60 overflow-hidden">
+          <div className="grid px-6 py-3 bg-bone-50 text-[12px] font-semibold uppercase tracking-[0.05em] text-ink-500" style={{ gridTemplateColumns: cols }}>
+            <div>Floors</div>
+            {ts.map((ty) => (
+              <div key={ty.id} className="text-right">{ty.name.replace(" Bedrooms", " BR").replace(" Bedroom", " BR")}</div>
+            ))}
+            <div className="text-right">Per floor</div>
+          </div>
+          {[...bands].reverse().map((b, i) => (
+            <div
+              key={b.from}
+              className="grid px-6 py-4 border-t border-ink-100 text-[17px] tabular-nums items-center"
+              style={{ gridTemplateColumns: cols, opacity: reveal(t, 0.1 + i * 0.15, 0.15) }}
+            >
+              <div className="font-semibold text-ink-900">{b.from === b.to ? b.from : `${b.from}–${b.to}`}</div>
+              {b.counts.map((c, j) => (
+                <div key={j} className={`text-right ${c ? "text-ink-800" : "text-ink-300"}`}>{c || "·"}</div>
+              ))}
+              <div className="text-right font-semibold">{b.counts.reduce((a, c) => a + c, 0)}</div>
             </div>
-          );
-        })}
-        <div style={{ position: "absolute", left: 270, top: 185, width: 170, height: 130, opacity: heroOpacity }}>
-          <div className="absolute inset-0" style={{ background: "#647d57", border: "1px solid #33422e", transform: "translateZ(40px)", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }} />
-          <div style={{ position: "absolute", left: "22%", top: "22%", width: "56%", height: "56%", background: "#7a9468", border: "1px solid #33422e", transform: "translateZ(160px)", boxShadow: "0 12px 30px rgba(0,0,0,0.25)" }} />
+          ))}
+        </div>
+        <div className="grid gap-4">
+          <StepTag n="05" label="Apartments" />
+          <div>
+            <div className="text-[15px] text-ink-500">Total units</div>
+            <div className="text-[64px] font-semibold tracking-tight leading-none text-ink-900">{shownUnits}</div>
+          </div>
+          <p className="text-[15px] text-ink-600">Auto-filled from the apartments GFA and the unit mix — every cell stays editable.</p>
         </div>
       </div>
-      <div className="absolute top-6 left-6 grid gap-1 text-ink-900">
-        <div className="eyebrow text-ink-500">Tab 08 · In-context</div>
-        <div className="text-[15px] font-medium">Drop the building on its real plot</div>
-        <div className="text-[11px] text-ink-500">Neighbours from OpenStreetMap · click to edit heights</div>
-      </div>
-    </div>
+    </Stage>
   );
 }
 
-function AiRenderScene({ t }: { t: number }) {
-  const phase = t < 0.45 ? "input" : t < 0.7 ? "rendering" : "output";
-  return (
-    <div className="absolute inset-0 grid grid-cols-2 gap-4 p-10 bg-bone-50">
-      <div className="border border-ink-200 bg-white shadow-sm relative overflow-hidden">
-        <div className="absolute top-2 left-2 eyebrow text-ink-500 text-[10px]">Input · 3D viewer</div>
-        <div className="absolute inset-0 flex items-center justify-center" style={{ background: "radial-gradient(circle at 50% 30%, #f3efe2 0%, #d9d4c0 100%)" }}>
-          <div className="relative" style={{ width: 220, height: 220, transformStyle: "preserve-3d", transform: "perspective(1100px) rotateX(58deg) rotateZ(-30deg)" }}>
-            {Array.from({ length: 8 }).map((_, i) => {
-              const w = 150 - Math.max(0, i - 5) * 14;
-              return (
-                <div key={i} className="absolute" style={{
-                  left: "50%", top: "50%", width: w, height: w * 0.86,
-                  transform: `translate3d(-50%, -50%, ${i * 14}px)`,
-                  background: i < 1 ? "#8a9a76" : "#647d57",
-                  border: "1px solid #33422e",
-                }} />
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      <div className="border border-ink-200 bg-white shadow-sm relative overflow-hidden">
-        <div className="absolute top-2 left-2 eyebrow text-ink-500 text-[10px]">Output · Gemini scheme</div>
-        {phase === "input" && (
-          <div className="absolute inset-0 flex items-center justify-center text-ink-400 text-[12px] italic">Click ✦ Render scheme</div>
-        )}
-        {phase === "rendering" && (
-          <div className="absolute inset-0 flex items-center justify-center grid gap-3 justify-items-center">
-            <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-            <div className="text-[12px] text-ink-700">Rendering with Gemini…</div>
-          </div>
-        )}
-        {phase === "output" && (
-          <svg viewBox="0 0 400 320" className="w-full h-full" style={{ opacity: ease((t - 0.7) / 0.3) }}>
-            <defs>
-              <linearGradient id="sky2" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#cfe1ec" /><stop offset="100%" stopColor="#f1ede0" />
-              </linearGradient>
-              <linearGradient id="ground2" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#e8e0c8" /><stop offset="100%" stopColor="#d5cca9" />
-              </linearGradient>
-            </defs>
-            <rect x="0" y="0" width="400" height="200" fill="url(#sky2)" />
-            <rect x="0" y="200" width="400" height="120" fill="url(#ground2)" />
-            <rect x="0" y="240" width="400" height="14" fill="#bdb59c" />
-            <polygon points="20,210 90,210 90,165 20,165" fill="#ffffff" stroke="#3a3a36" strokeWidth="1" />
-            <polygon points="100,210 160,210 160,140 100,140" fill="#ffffff" stroke="#3a3a36" strokeWidth="1" />
-            <polygon points="290,210 360,210 360,150 290,150" fill="#ffffff" stroke="#3a3a36" strokeWidth="1" />
-            <polygon points="20,295 80,295 80,260 20,260" fill="#ffffff" stroke="#3a3a36" strokeWidth="1" />
-            <polygon points="320,295 380,295 380,260 320,260" fill="#ffffff" stroke="#3a3a36" strokeWidth="1" />
-            <polygon points="180,210 270,210 270,80 180,80" fill="#a4be8e" stroke="#3a3a36" strokeWidth="1.4" />
-            <rect x="184" y="210" width="82" height="34" fill="#cfb98d" stroke="#3a3a36" strokeWidth="1" />
-            {Array.from({ length: 9 }).map((_, row) =>
-              Array.from({ length: 4 }).map((_, col) => (
-                <rect key={`${row}-${col}`} x={188 + col * 21} y={92 + row * 13} width={12} height={8} fill="#3a4a55" />
-              )),
-            )}
-            <rect x="195" y="216" width="60" height="14" fill="#9ec8d6" stroke="#3a3a36" strokeWidth="0.8" />
-            {[40, 95, 150, 230, 300, 365].map((cx, i) => (
-              <g key={i} transform={`translate(${cx}, 226)`}><circle r="6" fill="#7a8e58" stroke="#3a3a36" strokeWidth="0.8" /></g>
-            ))}
-            {[35, 110, 200, 290, 360].map((cx, i) => (
-              <g key={i} transform={`translate(${cx}, 280)`}><circle r="7" fill="#8da46e" stroke="#3a3a36" strokeWidth="0.8" /></g>
-            ))}
-            <rect x="210" y="244" width="14" height="6" fill="#c46f5b" stroke="#3a3a36" strokeWidth="0.6" rx="1" />
-            <rect x="135" y="244" width="14" height="6" fill="#5b7d9b" stroke="#3a3a36" strokeWidth="0.6" rx="1" />
-          </svg>
-        )}
-      </div>
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 eyebrow text-ink-500 text-[11px]">
-        Tab 08 · AI scheme render (Gemini image-to-image)
-      </div>
-    </div>
-  );
-}
-
-function ParkingLiftsScene({ t, data }: { t: number; data: SampleData }) {
+function ServicesScene({ t, data }: { t: number; data: SceneData }) {
+  const m = data.metrics;
   const pk = data.parking;
-  const lf = data.lifts;
-  const blocks = [
-    {
-      title: "Tab 05 · Parking",
-      rows: [
-        { k: "Required (apt)", v: `${pk.requiredTotal} std + ${pk.requiredPOD} POD` },
-        { k: "Available", v: `${pk.availableStandard} std + ${pk.availablePOD} POD` },
-        { k: "Balance", v: `${pk.balance >= 0 ? "+" : ""}${pk.balance} std · ${pk.podBalance >= 0 ? "+" : ""}${pk.podBalance} POD` },
-        { k: "Levels", v: data.project.parking.map((l) => l.name).join(" · ") },
-      ],
-      verdict: pk.balance >= 0 && pk.podBalance >= 0 ? "PASS" : "REVIEW",
-    },
-    {
-      title: "Tab 06 · Lifts (Dubai Building Code D.8.8)",
-      rows: [
-        { k: "Recommended", v: `${lf.liftsRecommended} lifts` },
-        { k: "Population", v: `${fmt0(lf.totalPopulation)} (${lf.occupiedFloors} floors)` },
-        { k: "Boarding floors", v: `${lf.boardingFloors}` },
-        { k: "Governing", v: lf.governing },
-      ],
-      verdict: lf.dbcTotal !== null ? "PASS" : "REVIEW",
-    },
-  ];
+  const spare = m.parkingProvided - m.parkingRequired;
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid grid-cols-2 gap-4 w-[760px]">
-        {blocks.map((b, bi) => {
-          const local = ease(clamp01((t - bi * 0.18) / 0.4));
-          return (
-            <div key={b.title} className="border border-ink-200 bg-white shadow-sm grid gap-2 p-4" style={{ opacity: local, transform: `translateY(${(1 - local) * 14}px)` }}>
-              <div className="flex items-baseline justify-between">
-                <span className="eyebrow text-ink-500 text-[10px]">{b.title}</span>
-                <span className={`px-1.5 py-0.5 text-[10px] uppercase tracking-[0.10em] ${b.verdict === "PASS" ? "bg-brand-100 text-brand-800" : "bg-amber-100 text-amber-800"}`}>{b.verdict}</span>
-              </div>
-              <div className="grid gap-1">
-                {b.rows.map((r) => (
-                  <div key={r.k} className="grid grid-cols-[120px_1fr] gap-2 text-[12px]">
-                    <span className="text-ink-500 text-[11px] uppercase tracking-[0.08em]">{r.k}</span>
-                    <span className="text-ink-900 tabular-nums">{r.v}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+    <Stage>
+      <div className="w-full max-w-[900px] grid gap-6">
+        <StepTag n="06–07" label="Parking & lifts" />
+        <div className="grid grid-cols-3 gap-4">
+          <Tile label="Spaces required" value={n0(m.parkingRequired)} sub={`${n0(pk.grandRequired)} standard + ${n0(pk.requiredPOD)} POD`} t={t} delay={0.05} />
+          <Tile label="Planned capacity" value={n0(m.parkingProvided)} sub={`${m.basements} basements + ${m.podium} podium levels`} t={t} delay={0.2} />
+          <Tile label="Passenger lifts" value={m.lifts !== null ? String(m.lifts) : "—"} sub={`Dubai Building Code D.8.8 · ${n0(data.lifts.totalPopulation)} people`} t={t} delay={0.35} />
+        </div>
+        {spare >= 0 && (
+          <div className="rounded-xl bg-emerald-50 ring-1 ring-inset ring-emerald-200 px-5 py-3 text-[15px] text-emerald-800" style={{ opacity: reveal(t, 0.55) }}>
+            Parking fits with {n0(spare)} spaces to spare — no extra basement needed.
+          </div>
+        )}
+      </div>
+    </Stage>
+  );
+}
+
+function MassingSlide({ t, data }: { t: number; data: SceneData }) {
+  const model = useMemo(() => demoModel(data.project), [data.project]);
+  const hour = 8 + t * 9.5;
+  const year = new Date().getFullYear();
+  const sun = useMemo(() => dubaiSun(year, 3, 21, hour), [year, hour]);
+  return (
+    <div className="absolute inset-0 bg-ink-950">
+      <MassingScene
+        plot={model.plot}
+        buildable={model.tower}
+        volumes={model.volumes}
+        floorHeight={model.floorHeight}
+        facade={model.facade}
+        style="realistic"
+        sun={sun}
+        autoRotate
+        showAnnotations={false}
+        quality="high"
+        frameKey="demo"
+      />
+      <div className="absolute top-6 left-6 rounded-xl bg-white/85 backdrop-blur-md ring-1 ring-black/10 px-4 py-3">
+        <StepTag n="08" label="3D massing" />
+        <div className="text-[20px] font-semibold text-ink-900 mt-2">
+          {data.metrics.heightCode} · {data.metrics.heightM.toFixed(0)} m
+        </div>
+        <div className="text-[13px] text-ink-500">Dubai sun · 21 March · {formatClock(hour)}</div>
       </div>
     </div>
   );
 }
 
-function ResultsScene({ t, data }: { t: number; data: SampleData }) {
-  const stats = [
-    { k: "Total units", v: `${data.program.totalUnits}`, sub: "Studio + 1BR + 2BR + 3BR" },
-    { k: "Interior GFA", v: `${fmt0(data.program.totalInteriorGFA)} m²`, sub: "Residential" },
-    { k: "Total GFA", v: `${fmt0(data.program.totalGFABuilding)} m²`, sub: `FAR ${data.program.far.toFixed(2)}` },
-    { k: "BUA", v: `${fmt0(data.program.totalBUABuilding)} m²`, sub: "with shafts + non-GFA" },
-    { k: "Sellable", v: `${fmt0(data.program.totalSellable)} m²`, sub: "Interior + balconies" },
-    { k: "Common (GFA)", v: `${fmt0(data.program.commonAreasGFA)} m²`, sub: `${fmtPct(data.program.efficiency.amenitiesPct + data.program.efficiency.circulationPct + data.program.efficiency.servicesPct)} of GFA` },
+function ResultsScene({ t, data }: { t: number; data: SceneData }) {
+  const m = data.metrics;
+  const tiles: [string, string, string][] = [
+    ["GFA", `${n0(m.totalGFA)} m²`, `${Math.round((m.gfaOfTarget ?? 0) * 100)}% of target`],
+    ["FAR", m.far?.toFixed(2) ?? "—", "GFA ÷ plot"],
+    ["Units", n0(m.units), `avg ${n0(m.avgUnitM2 ?? 0)} m² sellable`],
+    ["Sellable (GSA)", `${n0(m.gsa)} m²`, `${n0(m.gsa * 10.7639)} sqft`],
+    ["Efficiency", m.efficiency !== null ? `${(m.efficiency * 100).toFixed(1)}%` : "—", "GSA ÷ BUA"],
+    ["Height", `${m.heightM.toFixed(0)} m`, m.heightCode],
   ];
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-bone-50">
-      <div className="grid gap-3 w-[760px]">
-        <div className="eyebrow text-ink-500">Tab 10 · Results</div>
-        <div className="grid grid-cols-3 gap-3">
-          {stats.map((s, i) => {
-            const local = ease(clamp01((t - i * 0.10) / 0.3));
-            return (
-              <div key={s.k} className="border border-ink-200 bg-white p-4 shadow-sm" style={{ opacity: local, transform: `translateY(${(1 - local) * 14}px)` }}>
-                <div className="eyebrow text-ink-500 text-[10px]">{s.k}</div>
-                <div className="text-[22px] font-light text-ink-900 mt-1 tabular-nums">{s.v}</div>
-                <div className="text-[11px] text-ink-500 mt-0.5">{s.sub}</div>
-              </div>
-            );
-          })}
+    <Stage>
+      <div className="w-full max-w-[940px] grid gap-5">
+        <StepTag n="09" label="Areas & report" />
+        <div className="grid grid-cols-3 gap-4">
+          {tiles.map(([l, v, s], i) => (
+            <Tile key={l} label={l} value={v} sub={s} t={t} delay={0.05 + i * 0.08} />
+          ))}
         </div>
-        <p className="text-[11.5px] text-ink-500">
-          All numbers computed live from the {data.project.name} input — no hard-coded results.
+        <p className="text-[15px] text-ink-600" style={{ opacity: reveal(t, 0.65) }}>
+          Every figure recomputes as you edit — and exports as a branded PDF report with the 3D view.
         </p>
       </div>
-    </div>
+    </Stage>
   );
 }
 
 function OutroScene({ t, onLoadSample }: { t: number; onLoadSample: () => void }) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-ink-900 text-bone-100 overflow-hidden">
-      <div className="absolute inset-0 opacity-15" style={{
-        backgroundImage: "linear-gradient(0deg, transparent 95%, #647d57 95%), linear-gradient(90deg, transparent 95%, #647d57 95%)",
-        backgroundSize: "60px 60px",
-      }} />
-      <div className="text-center relative z-10" style={{ opacity: ease(t * 1.6) }}>
-        <div className="eyebrow text-brand-300 mb-3" style={{ letterSpacing: "0.4em" }}>{BRAND.wordmark} · {BRAND.market}</div>
-        <h2 className="text-5xl font-light tracking-tight mb-4">Plot Analysis</h2>
-        <p className="text-[15px] text-bone-300 max-w-md mx-auto leading-relaxed mb-6">
-          Your next study, in minutes — not weeks.
-        </p>
-        <div className="flex items-center justify-center gap-3 flex-wrap">
-          <button
-            onClick={onLoadSample}
-            className="inline-block px-5 py-3 bg-brand-500 text-white text-[12px] font-medium uppercase tracking-[0.15em] hover:bg-brand-600 transition-colors"
-          >
-            Open this sample in the app →
-          </button>
-          <Link href="/" className="inline-block px-5 py-3 border border-bone-300/40 text-bone-100 text-[12px] font-medium uppercase tracking-[0.15em] hover:bg-bone-100/10 transition-colors">
-            Or start fresh
-          </Link>
+    <div className="absolute inset-0 flex items-center justify-center bg-ink-900 text-white">
+      <div className="text-center" style={{ opacity: ease(t * 1.8) }}>
+        <BrandMark className="w-14 h-14 mx-auto mb-5" />
+        <h2 className="text-[44px] font-semibold tracking-tight">Your next plot, in minutes — not weeks.</h2>
+        <p className="text-[17px] text-white/60 mt-3">{BRAND.tagline}</p>
+        <div className="flex items-center justify-center gap-3 mt-8">
+          <button onClick={onLoadSample} className="btn btn-primary !px-5 !py-2.5 !text-[14px]">Open this sample in the app</button>
+          <Link href="/" className="btn !px-5 !py-2.5 !text-[14px] bg-white/10 text-white hover:bg-white/20">Start a new study</Link>
         </div>
       </div>
     </div>
@@ -655,17 +494,15 @@ function OutroScene({ t, onLoadSample }: { t: number; onLoadSample: () => void }
 }
 
 const SCENES: Scene[] = [
-  { id: "hero", durationMs: 4000, caption: `${BRAND.wordmark} — Production City walkthrough`, render: HeroScene },
-  { id: "plot", durationMs: 6500, caption: "00 · Trace the parcel — 6,764 m² in IMPZ.", render: ({ t }) => <PlotScene t={t} /> },
-  { id: "setup", durationMs: 7000, caption: "01 · Plot, zoning, floors, setbacks.", render: SetupScene },
-  { id: "typologies", durationMs: 6500, caption: "02 · 10 unit types — Studio, 1BR (×4), 2BR (×4), 3BR.", render: TypologiesScene },
-  { id: "program", durationMs: 8500, caption: "03 · Distribute the typologies floor by floor.", render: ProgramScene },
-  { id: "common", durationMs: 7000, caption: "04 · Lobbies, lifts, MEP, gym, pools, BBQ — flagged GFA / BUA / OPEN.", render: CommonAreasScene },
-  { id: "parking-lifts", durationMs: 6000, caption: "05 · Parking & 06 · Lifts — Dubai DCD + CIBSE Guide D.", render: ParkingLiftsScene },
-  { id: "massing", durationMs: 7500, caption: "08 · Massing in 3D — block, podium, courtyard, twin, stepped, L, U.", render: MassingScene },
-  { id: "context", durationMs: 7000, caption: "08 · In-context — drop it on its real plot, edit neighbours.", render: ContextScene },
-  { id: "ai", durationMs: 8000, caption: "✦ AI scheme render — Gemini image-to-image.", render: ({ t }) => <AiRenderScene t={t} /> },
-  { id: "results", durationMs: 7000, caption: "10 · KPIs computed live — every number is real.", render: ResultsScene },
+  { id: "hero", durationMs: 4500, caption: `${BRAND.wordmark} — ${BRAND.tagline.toLowerCase()}`, render: HeroScene },
+  { id: "plot", durationMs: 6500, caption: "Drop the affection plan — parcel and scale are read automatically.", render: PlotScene },
+  { id: "setup", durationMs: 6500, caption: "Zone, market class, target GFA and the floor breakdown.", render: SetupScene },
+  { id: "distribution", durationMs: 6000, caption: "Tower floors derived from the residential GFA.", render: DistributionScene },
+  { id: "typologies", durationMs: 6500, caption: "Unit types and the market-class mix for the zone.", render: TypologiesScene },
+  { id: "apartments", durationMs: 7000, caption: "Units floor by floor — auto-filled, fully editable.", render: ApartmentsScene },
+  { id: "services", durationMs: 6500, caption: "Parking (incl. POD) and lifts to Dubai Building Code D.8.8.", render: ServicesScene },
+  { id: "massing", durationMs: 11000, caption: "3D massing with a real Dubai sun & shadow study.", render: MassingSlide },
+  { id: "results", durationMs: 6500, caption: "Areas, efficiency ratios and a one-click PDF report.", render: ResultsScene },
   { id: "outro", durationMs: 5000, caption: "Open the sample and explore it yourself.", render: () => null },
 ];
 const TOTAL_MS = SCENES.reduce((s, sc) => s + sc.durationMs, 0);
@@ -684,13 +521,17 @@ export default function DemoPage() {
   idxRef.current = idx;
   tRef.current = t;
 
-  // Real numbers computed once.
-  const data: SampleData = useMemo(() => {
-    const project = PRODUCTION_CITY_SAMPLE;
-    const program = computeProgram(project);
-    const parking = computeParking(project);
-    const lifts = computeLifts(project);
-    return { project, program, parking, lifts };
+  // Real numbers, computed once from the shipped demo scheme.
+  const data: SceneData = useMemo(() => {
+    const project = DEMO_SAMPLE;
+    return {
+      project,
+      program: computeProgram(project),
+      parking: computeParking(project),
+      lifts: computeLifts(project),
+      tower: computeTowerYield(project),
+      metrics: projectMetrics(project),
+    };
   }, []);
 
   const loadSample = useStore((s) => s.loadSample);
@@ -730,8 +571,18 @@ export default function DemoPage() {
     return ms / 1000;
   }, [idx, t]);
 
-  function restart() { setIdx(0); setT(0); setDone(false); setPlaying(true); }
-  function jumpTo(i: number) { setIdx(i); setT(0); setDone(false); setPlaying(true); }
+  function restart() {
+    setIdx(0);
+    setT(0);
+    setDone(false);
+    setPlaying(true);
+  }
+  function jumpTo(i: number) {
+    setIdx(i);
+    setT(0);
+    setDone(false);
+    setPlaying(true);
+  }
 
   function handleLoadSample() {
     loadSample();
@@ -739,63 +590,67 @@ export default function DemoPage() {
   }
 
   const scene = SCENES[idx];
+  // Rendered as a component (not called as a function) so scenes can use hooks.
+  const SceneView = scene.render;
 
   return (
-    <main className="min-h-screen bg-ink-900 text-bone-100 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-[1100px] grid gap-3">
-        <div className="flex items-baseline justify-between gap-4">
-          <div>
-            <div className="eyebrow text-brand-300 text-[10px]">{BRAND.wordmark} · {BRAND.market}</div>
-            <h1 className="text-[18px] font-light tracking-tight text-bone-100">Plot Analysis · Demo · {data.project.name}</h1>
+    <main className="min-h-screen bg-ink-950 text-white flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-[1180px] grid gap-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <BrandMark className="w-8 h-8" />
+            <div>
+              <div className="wordmark text-[13px]">{BRAND.wordmark}</div>
+              <div className="text-[12px] text-white/50">Product demo · {data.project.name}</div>
+            </div>
           </div>
-          <Link href="/" className="text-[11px] uppercase tracking-[0.18em] text-bone-300 hover:text-bone-100 transition-colors">
-            Skip to app →
-          </Link>
+          <Link href="/" className="btn btn-xs bg-white/10 text-white hover:bg-white/20">Skip to the app →</Link>
         </div>
 
-        <div className="relative aspect-[16/9] bg-bone-100 border border-ink-700 overflow-hidden shadow-2xl">
-          {scene.id === "outro" ? <OutroScene t={t} onLoadSample={handleLoadSample} /> : scene.render({ t, data })}
-          <div className="absolute bottom-0 left-0 right-0 px-6 py-3 bg-gradient-to-t from-ink-900/85 to-transparent">
-            <div className="text-bone-100 text-[15px] font-light tracking-tight">{scene.caption}</div>
-          </div>
+        <div className="relative aspect-[16/9] rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10 text-ink-900">
+          {scene.id === "outro" ? <OutroScene t={t} onLoadSample={handleLoadSample} /> : <SceneView t={t} data={data} />}
+          {scene.id !== "hero" && scene.id !== "outro" && (
+            <div className="absolute bottom-0 left-0 right-0 px-6 py-4 bg-gradient-to-t from-ink-950/80 to-transparent pointer-events-none">
+              <div className="text-white text-[17px] font-medium">{scene.caption}</div>
+            </div>
+          )}
           {done && (
-            <button onClick={restart} className="absolute top-3 right-3 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.10em] bg-white/90 text-ink-900 border border-ink-200 hover:bg-white">↻ Replay</button>
+            <button onClick={restart} className="absolute top-3 right-3 btn btn-secondary btn-xs">↻ Replay</button>
           )}
         </div>
 
-        <div className="grid gap-2">
-          <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
-            <button
-              onClick={() => (done ? restart() : setPlaying((p) => !p))}
-              className="w-9 h-9 grid place-items-center border border-ink-700 bg-ink-800 hover:bg-ink-700 text-bone-100 transition-colors"
-              title={playing ? "Pause" : "Play"}
-            >{done ? "↻" : playing ? "❚❚" : "▶"}</button>
-            <div className="grid gap-1 h-1.5" style={{ gridTemplateColumns: `repeat(${SCENES.length}, 1fr)` }}>
-              {SCENES.map((s, i) => {
-                const filled = i < idx ? 1 : i === idx ? t : 0;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => jumpTo(i)}
-                    className="relative bg-ink-700 hover:bg-ink-600"
-                    title={s.caption}
-                    aria-label={`Jump to scene ${i + 1}: ${s.caption}`}
-                  >
-                    <span className="absolute inset-y-0 left-0 bg-brand-500" style={{ width: `${filled * 100}%` }} />
-                  </button>
-                );
-              })}
-            </div>
-            <div className="text-[10px] text-bone-300 tabular-nums w-[64px] text-right">
-              {elapsedSec.toFixed(1)}s / {(TOTAL_MS / 1000).toFixed(0)}s
-            </div>
+        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
+          <button
+            onClick={() => (done ? restart() : setPlaying((p) => !p))}
+            className="w-9 h-9 grid place-items-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+            title={playing ? "Pause" : "Play"}
+            aria-label={playing ? "Pause" : "Play"}
+          >{done ? "↻" : playing ? "❚❚" : "▶"}</button>
+          <div className="grid gap-1 h-1.5" style={{ gridTemplateColumns: `repeat(${SCENES.length}, 1fr)` }}>
+            {SCENES.map((s, i) => {
+              const filled = i < idx ? 1 : i === idx ? t : 0;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => jumpTo(i)}
+                  className="relative rounded-full bg-white/15 hover:bg-white/25 overflow-hidden"
+                  title={s.caption}
+                  aria-label={`Jump to scene ${i + 1}: ${s.caption}`}
+                >
+                  <span className="absolute inset-y-0 left-0 bg-brand-400" style={{ width: `${filled * 100}%` }} />
+                </button>
+              );
+            })}
           </div>
-          <p className="text-[10.5px] text-bone-300 leading-relaxed">
-            Tip — to record a video: open this page in full-screen, hit Play, capture the screen with Loom, OBS or
-            <kbd className="mx-1 px-1.5 py-0.5 bg-ink-800 border border-ink-700 rounded text-[10px]">⌘⇧5</kbd>
-            on macOS / <kbd className="mx-1 px-1.5 py-0.5 bg-ink-800 border border-ink-700 rounded text-[10px]">Win+G</kbd> on Windows.
-          </p>
+          <div className="text-[11px] text-white/50 tabular-nums w-[72px] text-right">
+            {elapsedSec.toFixed(1)}s / {(TOTAL_MS / 1000).toFixed(0)}s
+          </div>
         </div>
+        <p className="text-[12px] text-white/40 leading-relaxed">
+          Tip — to record a video, open this page full-screen, press play and capture the screen with Loom, OBS,
+          <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white/10 text-[11px]">⌘⇧5</kbd> on macOS or
+          <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white/10 text-[11px]">Win+G</kbd> on Windows.
+        </p>
       </div>
     </main>
   );

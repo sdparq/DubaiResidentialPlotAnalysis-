@@ -6,34 +6,60 @@ A web platform for developers, investment teams and architects: read the plot fr
 split the GFA by use, get the unit mix for the zone's market class, fill the apartments floor by floor, size
 parking and lifts, see the massing in 3D and print a one-page areas & ratios report.
 
-Ships with the neutral **PLOTIQ** brand and is built to be white-labelled per client in one file (see
-[White-labelling](#white-labelling--rebranding)).
+Ships with the neutral **PLOTIQ** brand and is built to be white-labelled per client (see
+[White-labelling](#white-labelling--rebranding)). Every new browser opens a fully worked **demo scheme** — a
+fictional 2B+G+3P+35 residential tower on a 3,200 m² plot in Business Bay — so every step, the 3D model and the
+report have something to show from the first click.
 
-## What it does
+## The workspace
 
-| Tab | What you get |
+- **Workflow sidebar** — the study in nine steps grouped by phase (Site · Programme · Services · Design ·
+  Results), with a tick on every step that has its data and a progress bar.
+- **Live KPI bar** — plot area, GFA vs target, FAR, units, sellable area, efficiency, height in Dubai storey
+  notation (e.g. `2B+G+3P+35`), parking and lifts, recomputed on every keystroke. Each figure links to the step
+  that drives it.
+- **Guided steps** — every page opens with what it does and closes with the next step.
+
+| Step | What you get |
 | --- | --- |
-| 00 · Plot | Upload the affection plan (PDF / image). The parcel is detected by its DLD highlight colours and the scale from the dimension labels — polygon and calibration land with zero clicks. Trace ground / podium / tower footprints (several towers supported), zoom and pan for precision |
-| 01 · Setup | Zone (Dubai / Abu Dhabi) with automatic market-class detection, plot area, target GFA, stratified floor breakdown (basements / ground / podium / type floors) and GFA breakdown by use (residential, retail, commercial, hospitality) in m² or % |
-| 02 · Distribution | Tower floors derived from the residential GFA and the tower footprint (zoning cap optional); residential GFA split into apartments, amenities, circulation and services |
-| 03 · Typologies | Apply the class unit mix in one click, per-typology mix %, balcony % and how much of each balcony counts as GFA (0 / 50 / 100 %), Dubai DCD occupancy defaults |
-| 04 · Apartments | Units per floor, auto-filled from the apartments GFA and the unit mix (largest-remainder distribution) |
-| 05 · Parking | Required spaces per typology, retail and other uses, POD (People of Determination) tiered rule, parking surface vs basements / ground / podium and the number of basements needed |
-| 06 · Lifts | Dubai Building Code D.8.8 |
-| 07 · Massing | Stratified 3D model (basement / ground / podium / tower) with per-edge setbacks, street context, parametric façade, podium roof amenities, AI render (Gemini) and a first-person immersive walk |
-| 08 · Areas Summary | GFA, GSA (sellable) and construction BUA derivations and efficiency ratios |
-| 🔒 Class Library | Reference matrix of UAE market classes (A · most luxurious → G · economical): zones, unit mix, unit areas, prices, floor heights and parking standard — editable |
+| 01 · Plot | Upload the affection plan (PDF / image). The parcel is detected by its DLD highlight colours and the scale from the dimension labels — polygon and calibration land with zero clicks. Trace ground / podium / tower footprints (several towers supported), zoom and pan for precision |
+| 02 · Setup | Zone (Dubai / Abu Dhabi) with automatic market-class detection, plot area, target GFA, stratified floor breakdown (basements / ground / podium / type floors) and GFA split by use (residential, retail, commercial, hospitality) in m² or % |
+| 03 · Distribution | Tower floors derived from the residential GFA and the tower floor plate (zoning cap optional); residential GFA split into apartments, amenities, circulation and services |
+| 04 · Typologies | Apply the class unit mix in one click, per-typology mix %, balcony % and how much of each balcony counts as GFA (0 / 50 / 100 %), Dubai DCD occupancy defaults |
+| 05 · Apartments | Units per floor, auto-filled from the apartments GFA and the unit mix (largest-remainder distribution) |
+| 06 · Parking | Required spaces per typology, retail and other uses, POD (People of Determination) tiered rule, parking surface vs basements / ground / podium and the number of basements needed |
+| 07 · Lifts | Dubai Building Code D.8.8 passenger lifts and Table D.6 cabin specifications |
+| 08 · 3D Massing | See below |
+| 09 · Areas & ratios | GFA, GSA (sellable) and construction BUA derivations and efficiency ratios |
+| 🔒 Class library | Reference matrix of UAE market classes (A · most luxurious → G · economical): zones, unit mix, unit areas, prices, floor heights and parking standard — editable |
 
-**Report PDF** in the header produces a one-page areas & ratios summary ready to share.
+### 3D massing
+
+- Stratified model (basement / ground / podium / tower) with per-edge setbacks, street context, parametric
+  residential façade, fin screens, podium pool and lounge, street palms.
+- **Three styles** — *Model* (white architectural model), *Diagram* (colour by tier, with legend) and
+  *Realistic* (sky, desert ground, glass).
+- **Dubai sun & shadow study** — pick 21 Mar / Jun / Sep / Dec, scrub or play the day from sunrise to sunset;
+  the sun position is computed for Dubai (±0.1°) and oriented by the plot's true-north bearing.
+- **Camera views** — aerial, street level, front elevation and plan, plus turntable rotation.
+- **Presentation mode** — full screen with the project title and headline figures, for client meetings.
+- **Presentation image** — a 2× PNG of the current view with a branded title bar and key figures.
+- **Immersive walk** (first person, WASD) and **AI render** of the current view (Google Gemini, each user
+  brings their own API key).
+
+**Export report** in the top bar produces a branded PDF: cover with headline figures, the latest 3D view,
+areas summary, efficiency ratios, unit mix, parking and lifts.
 
 Projects are saved in the browser automatically; enable the optional [cloud sync](#cloud-sync-optional) to
-share them with the whole team.
+share them with the whole team. A scripted promo of the product plays at **`/demo`** (all figures computed
+from the demo scheme, 3D included) — record it with any screen recorder.
 
 ## Stack
 
 - Next.js 14 (App Router) + TypeScript + Tailwind — fully static export
 - Calculations: pure TS modules in `lib/calc/`, covered by Vitest
-- 3D: react-three-fiber + drei + postprocessing
+- 3D: react-three-fiber + drei + postprocessing (ambient occlusion in presentation mode)
+- Icons: lucide-react
 - State: Zustand with `localStorage` persistence (+ optional Supabase cloud sync)
 - Optional AI renders: Google Gemini (each user enters their own API key in the UI)
 
@@ -49,16 +75,19 @@ npm test         # calculation, plot-detection and parity tests
 ## White-labelling / rebranding
 
 1. `lib/brand.ts` — wordmark, descriptor, product name, tagline. It is the only place a product/company name
-   lives in the code (header, browser tab, report footer, demo).
-2. `tailwind.config.ts` — the `brand` colour scale. Swap the 10 hex values to restyle every accent.
-3. Optional: the logo mark is inline SVG in `components/header-bar.tsx`, the favicon is `app/icon.svg`.
-4. For each client deployment set their own cloud project and, if wanted, their own Class Library password
+   lives in the code (sidebar, browser tab, report, presentation images, demo).
+2. `tailwind.config.ts` — the `brand` colour scale (10 hex values) restyles every accent; `sand` is the warm
+   secondary accent used by the sun study.
+3. Logo mark: `components/shell/brand-mark.tsx` (app), `lib/branded-image.ts` (`MARK_SVG`, presentation images)
+   and `app/icon.svg` (favicon).
+4. The demo scheme lives in `lib/sample.ts` — replace it with a reference project of the client if they prefer.
+5. For each client deployment set their own cloud project and, if wanted, their own Class Library password
    (below).
 
 ## Class Library access
 
-The Class Library holds the shared price / unit-mix matrix and is hidden behind the padlock at the right of the
-tab bar. To restrict it to an admin, set `NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256` to the SHA-256 hex of the
+The Class Library holds the shared price / unit-mix matrix and is reached from the padlock at the bottom of the
+sidebar. To restrict it to an admin, set `NEXT_PUBLIC_LIBRARY_PASSWORD_SHA256` to the SHA-256 hex of the
 password at build time (only the hash ships in the bundle):
 
 ```bash
@@ -132,7 +161,7 @@ accounts. Without these settings the app runs unchanged in local-only mode.
    NEXT_PUBLIC_SUPABASE_ANON_KEY=...
    NEXT_PUBLIC_SUPABASE_SHARED_EMAIL=team@example.com
    ```
-6. Redeploy. The header gains a **Team password** input; once unlocked, every change to a cloud-tracked
+6. Redeploy. The top bar gains a **Team password** input; once unlocked, every change to a cloud-tracked
    project auto-saves, and teammates see a project as read-only while someone else has it open.
 
 ## Deploy to Netlify

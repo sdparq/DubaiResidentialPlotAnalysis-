@@ -2,7 +2,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Project, Typology, ProgramCell, CommonArea, ParkingLevel, OtherUse } from "./types";
-import { PRODUCTION_CITY_SAMPLE, emptyProject, newId } from "./sample";
+import { DEMO_SAMPLE, emptyProject, newId } from "./sample";
 
 /** localStorage wrapper that survives QuotaExceededError. The whole store is
  *  one key rewritten on every change; plan images (parcel.imageDataUrl) can be
@@ -91,7 +91,7 @@ interface State {
 
 function freshSample(): Project {
   const now = Date.now();
-  return { ...PRODUCTION_CITY_SAMPLE, id: newId("sample"), createdAt: now, updatedAt: now };
+  return { ...DEMO_SAMPLE, id: newId("sample"), createdAt: now, updatedAt: now };
 }
 
 function initState(): { projects: Record<string, Project>; activeProjectId: string } {
@@ -126,7 +126,6 @@ export const useStore = create<State>()(
 
       loadSample: () => {
         const p = freshSample();
-        p.name = "Production City — Sample";
         set((s) => ({ projects: { ...s.projects, [p.id]: p }, activeProjectId: p.id }));
         return p.id;
       },
@@ -309,7 +308,7 @@ export const useStore = create<State>()(
           const now = Date.now();
           const id = newId();
           const migrated: Project = {
-            ...PRODUCTION_CITY_SAMPLE,
+            ...emptyProject(),
             ...old,
             id,
             createdAt: now,

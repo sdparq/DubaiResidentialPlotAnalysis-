@@ -11,6 +11,8 @@ import {
   DEFAULT_RESIDENTIAL_BREAKDOWN,
   type CommonArea,
 } from "@/lib/types";
+import { StatTile } from "./ui/stat-tile";
+import { StackedBar } from "./ui/stacked-bar";
 
 const M2_TO_SQFT = 10.7639;
 function fmtSqft(m2: number): string {
@@ -102,7 +104,7 @@ export default function CommonAreasTab() {
 
       <div className="card">
         <div className="mb-5">
-          <h2 className="section-title">Distribution · residential GFA → apartments / common areas</h2>
+          <h2 className="section-title">Residential GFA → apartments and common areas</h2>
           <p className="section-sub">
             Splits the residential GFA between <strong>Amenities</strong>, <strong>Circulation</strong>{" "}
             and what remains for <strong>Apartments</strong>. <strong>Services</strong> (MEP, shafts,
@@ -113,22 +115,34 @@ export default function CommonAreasTab() {
         </div>
 
         {residentialGFA <= 0 && (
-          <div className="border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[12.5px] mb-4 leading-snug">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[13px] mb-4 leading-snug">
             Set <strong>Residential GFA</strong> in Setup&apos;s GFA breakdown to drive this table.
           </div>
         )}
 
         {residentialGFA > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
-            <Stat label="Residential GFA" value={`${fmt0(residentialGFA)} m²`} sub={fmtSqft(residentialGFA)} />
-            <Stat label="Apartments GFA" value={`${fmt0(apartmentsGFA)} m²`} sub={`${apartmentsPct.toFixed(1)}% of residential`} />
-            <Stat label="Σ Common GFA" value={`${fmt0(totalCommonGFA)} m²`} sub={`${(amenitiesPct + circulationPct).toFixed(1)}% of residential`} />
-          </div>
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+              <Stat label="Residential GFA" value={`${fmt0(residentialGFA)} m²`} sub={fmtSqft(residentialGFA)} />
+              <Stat label="Apartments GFA" value={`${fmt0(apartmentsGFA)} m²`} sub={`${apartmentsPct.toFixed(1)}% of residential`} emphasis />
+              <Stat label="Σ Common GFA" value={`${fmt0(totalCommonGFA)} m²`} sub={`${(amenitiesPct + circulationPct).toFixed(1)}% of residential`} />
+            </div>
+            <div className="mb-5">
+              <StackedBar
+                label="Residential GFA split"
+                segments={[
+                  { key: "apt", label: "Apartments", value: apartmentsGFA, color: "#1baf7a", display: `${apartmentsPct.toFixed(1)}%` },
+                  { key: "amen", label: "Amenities", value: amenitiesGFA, color: "#eb6834", display: `${amenitiesPct.toFixed(1)}%` },
+                  { key: "circ", label: "Circulation", value: circulationGFA, color: "#2a78d6", display: `${circulationPct.toFixed(1)}%` },
+                ]}
+              />
+            </div>
+          </>
         )}
 
-        <div className="border border-ink-200">
+        <div className="panel" style={{ minWidth: 560 }}>
           {/* Header */}
-          <div className="grid grid-cols-[1fr_140px_120px_140px] gap-2 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+          <div className="grid grid-cols-[1fr_140px_120px_140px] gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
             <div>Group</div>
             <div className="text-right">% of residential</div>
             <div className="text-right">m²</div>
@@ -178,7 +192,7 @@ function TowerYieldCard({
   return (
     <div className="card">
       <div className="mb-4">
-        <h2 className="section-title">Tower floors · residential GFA − ground − podium</h2>
+        <h2 className="section-title">Tower floors from the residential GFA</h2>
         <p className="section-sub">
           Enter each tier's footprint as you know it from your own zoning study —
           it is not derived from the Massing plot (to avoid dragging tracing errors along). The
@@ -189,8 +203,8 @@ function TowerYieldCard({
         </p>
       </div>
 
-      <div className="border border-ink-200 mb-4">
-        <div className="grid grid-cols-[1fr_130px_70px_120px] gap-2 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+      <div className="panel mb-4" style={{ minWidth: 520 }}>
+        <div className="grid grid-cols-[1fr_130px_70px_120px] gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
           <div>Tier</div>
           <div className="text-right">Footprint m² (manual)</div>
           <div className="text-right">Floors</div>
@@ -227,13 +241,13 @@ function TowerYieldCard({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <Stat label="GFA to tower" value={y.towerTargetGFA > 0 ? `${fmt0(y.towerTargetGFA)} m²` : "—"} sub={y.groundGFA + y.podiumGFA > 0 ? `residential − ground ${fmt0(y.groundGFA)} − podium ${fmt0(y.podiumGFA)} m²` : "residential (no ground/podium plates set)"} />
         <Stat label="Tower floors needed" value={y.towerFootprintM2 > 0 ? `${fmt0(y.requiredTowerFloors)}` : "—"} sub="uncapped" />
-        <div className="border border-ink-200 bg-white p-3">
-          <div className="eyebrow text-ink-500 text-[10px]">Max tower floors (zoning cap)</div>
+        <div className="rounded-lg ring-1 ring-inset ring-ink-200/80 bg-white p-3.5">
+          <div className="text-[12px] font-medium text-ink-500">Max tower floors (zoning cap)</div>
           <input
             type="number"
             step={1}
             min={0}
-            className="cell-input text-right !text-[18px] font-light tabular-nums mt-0.5 w-full"
+            className="cell-input text-right !text-[17px] font-semibold tabular-nums mt-1 w-full"
             value={maxTowerFloors ?? ""}
             placeholder="unlimited"
             onChange={(e) => {
@@ -241,23 +255,25 @@ function TowerYieldCard({
               onSetMaxTowerFloors(Number.isFinite(n) ? n : 0);
             }}
           />
-          <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">Leave empty for unlimited</div>
+          <div className="text-[11.5px] text-ink-500 mt-1 leading-snug">Leave empty for unlimited</div>
         </div>
         <Stat
           label="Tower floors (final)"
           value={y.towerFootprintM2 > 0 ? `${fmt0(y.towerFloors)}` : "—"}
           sub={y.exceedsMax ? "clamped to the max" : "applied to the project"}
+          emphasis
+          tone={y.exceedsMax ? "bad" : y.towerFootprintM2 > 0 ? "ok" : null}
         />
       </div>
 
       {y.towerFootprintM2 <= 0 && (
-        <div className="border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[12.5px] leading-snug">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[13px] leading-snug">
           Enter the tower footprint per floor to compute how many floors are needed.
         </div>
       )}
 
       {y.exceedsMax && (
-        <div className="border border-red-200 bg-red-50 text-red-700 p-3 text-[12px] leading-snug">
+        <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 p-3 text-[13px] leading-snug">
           With the <strong>{y.maxTowerFloors}</strong>-floor cap only{" "}
           <strong>{fmt0(y.towerGFA)} m²</strong> of the <strong>{fmt0(y.towerTargetGFA)} m²</strong>
           headed for the tower fits — <strong>{fmt0(y.gfaShort)} m²</strong> short ({y.floorsShort} floor
@@ -281,10 +297,10 @@ function FootprintRow({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className={`grid grid-cols-[1fr_130px_70px_120px] gap-2 px-3 py-2.5 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0 ${highlight ? "bg-brand-50/40" : ""}`}>
+    <div className={`grid grid-cols-[1fr_130px_70px_120px] gap-2 px-3 py-2.5 items-center text-[13px] tabular-nums border-b border-ink-100 last:border-b-0 ${highlight ? "bg-brand-50/50" : ""}`}>
       <div>
-        <div className="text-ink-900">{label}</div>
-        <div className="text-[10.5px] text-ink-500 leading-snug">{hint}</div>
+        <div className="text-ink-900 font-medium">{label}</div>
+        <div className="text-[11.5px] text-ink-500 leading-snug">{hint}</div>
       </div>
       <div className="text-right">
         <input
@@ -318,18 +334,15 @@ function GroupRow({
   kind: "GFA" | "BUA";
   onChange: (v: number) => void;
 }) {
-  const kindClass =
-    kind === "GFA"
-      ? "bg-brand-500 text-white border-brand-500"
-      : "bg-ink-900 text-white border-ink-900";
+  const kindClass = kind === "GFA" ? "tag bg-brand-50 text-brand-800 ring-1 ring-inset ring-brand-200" : "tag bg-ink-900 text-white";
   return (
     <div className="grid grid-cols-[1fr_140px_120px_140px] gap-2 items-center px-3 py-2.5 border-b border-ink-100">
       <div>
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-medium text-ink-900">{label}</span>
-          <span className={`px-1.5 py-0 text-[9.5px] uppercase tracking-[0.10em] border ${kindClass}`}>{kind}</span>
+          <span className={kindClass}>{kind}</span>
         </div>
-        <div className="text-[10.5px] text-ink-500 leading-snug mt-0.5">{hint}</div>
+        <div className="text-[11.5px] text-ink-500 leading-snug mt-0.5">{hint}</div>
       </div>
       <div className="text-right">
         <div className="relative inline-block">
@@ -350,17 +363,11 @@ function GroupRow({
       <div className="text-right text-ink-900 tabular-nums">
         {m2 > 0 ? `${Math.round(m2).toLocaleString("en-US")} m²` : "—"}
       </div>
-      <div className="text-right text-[11px] text-ink-500 tabular-nums">{fmtSqft(m2)}</div>
+      <div className="text-right text-[12px] text-ink-500 tabular-nums">{fmtSqft(m2)}</div>
     </div>
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="border border-ink-200 bg-white p-3">
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className="text-[18px] font-light text-ink-900 mt-0.5 tabular-nums">{value}</div>
-      {sub && <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{sub}</div>}
-    </div>
-  );
+function Stat(props: { label: string; value: string; sub?: string; emphasis?: boolean; tone?: "ok" | "warn" | "bad" | null }) {
+  return <StatTile {...props} />;
 }

@@ -4,15 +4,17 @@
 
 html, body { height: 100%; }
 body {
-  color: #0e0e0e;
-  background: #f6f4ee;
-  font-feature-settings: "ss01", "cv11";
+  color: #0b1324;
+  background: #f3f5f8;
+  font-feature-settings: "cv11", "ss01", "ss03";
 }
 
 /* Hide number input spinners */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; }
+
+::selection { background: rgba(13, 127, 105, 0.18); }
 
 /*
  * Component classes live in the components layer so Tailwind utilities placed on the
@@ -22,16 +24,16 @@ input[type="number"] { -moz-appearance: textfield; }
 @layer components {
   /* ---------- form controls ---------- */
   .cell-input {
-    @apply w-full px-3 py-2 bg-white border border-ink-200 text-ink-900 text-sm
+    @apply w-full px-3 py-2 bg-white border border-ink-200 text-ink-900 text-sm rounded-md
            placeholder:text-ink-400
-           focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500
-           transition-colors;
-    border-radius: 2px;
+           focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/15
+           transition-[border-color,box-shadow];
   }
+  .cell-input:hover:not(:disabled):not(:focus) { @apply border-ink-300; }
   .cell-input:disabled { @apply bg-bone-100 text-ink-500; }
 
   select.cell-input {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%236b6b6b'><path d='M3 4.5l3 3 3-3'/></svg>");
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%235a6479' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='M3 4.75l3 3 3-3'/></svg>");
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
     background-size: 12px;
@@ -39,85 +41,101 @@ input[type="number"] { -moz-appearance: textfield; }
     appearance: none;
   }
 
+  input[type="checkbox"], input[type="radio"] { accent-color: #0d7f69; }
+
   /* ---------- buttons ---------- */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium
-           transition-colors uppercase tracking-wider;
-    letter-spacing: 0.08em;
-    font-size: 11.5px;
-    border-radius: 2px;
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 text-[13px] font-medium
+           rounded-lg transition-colors whitespace-nowrap
+           disabled:opacity-50 disabled:cursor-not-allowed;
   }
-  .btn-primary { @apply bg-ink-900 text-bone-100 hover:bg-brand-700; }
-  .btn-secondary { @apply bg-transparent border border-ink-300 text-ink-800 hover:border-ink-700 hover:bg-bone-200; }
-  .btn-ghost { @apply bg-transparent text-ink-700 hover:text-ink-900; }
-  .btn-danger { @apply bg-transparent border border-red-300 text-red-700 hover:bg-red-50; }
-  .btn-xs { @apply px-2.5 py-1.5; font-size: 10.5px; }
+  .btn-primary { @apply bg-brand-600 text-white shadow-sm hover:bg-brand-700; }
+  .btn-secondary { @apply bg-white border border-ink-200 text-ink-800 shadow-sm hover:bg-bone-50 hover:border-ink-300; }
+  .btn-dark { @apply bg-ink-900 text-white shadow-sm hover:bg-ink-800; }
+  .btn-ghost { @apply bg-transparent text-ink-600 hover:text-ink-900 hover:bg-bone-100; }
+  .btn-danger { @apply bg-white border border-red-200 text-red-700 hover:bg-red-50; }
+  .btn-xs { @apply px-2.5 py-1 text-[12px] rounded-md; }
+
+  /* Segmented control: <div class="seg"><button class="seg-btn" data-active>… */
+  .seg {
+    @apply inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-bone-100 border border-ink-200/80;
+  }
+  .seg-btn {
+    @apply px-2.5 py-1 text-[12px] font-medium text-ink-600 rounded-md transition-colors whitespace-nowrap
+           hover:text-ink-900;
+  }
+  .seg-btn[data-active="true"] { @apply bg-white text-ink-900 shadow-sm ring-1 ring-ink-200/70; }
 
   /* ---------- cards & layout ---------- */
   .card {
-    /* min-w-0: grid items must be allowed to shrink to the screen width */
-    @apply bg-white border border-ink-200 p-4 sm:p-6 min-w-0;
-    border-radius: 2px;
+    /* min-w-0: grid items must be allowed to shrink to the screen width; wide
+       tables scroll sideways inside their card instead of being cut off. */
+    @apply bg-white border border-ink-200/80 rounded-xl p-4 sm:p-6 min-w-0 shadow-card overflow-x-auto;
+  }
+  /* A bordered sub-panel inside a card (tier table, facade controls…). */
+  .panel { @apply bg-white border border-ink-200/80 rounded-lg overflow-hidden min-w-0; }
+  .panel-head {
+    @apply px-3 py-2 bg-bone-50 border-b border-ink-200/80 flex items-center justify-between gap-2 min-h-[40px];
   }
   .kpi {
-    @apply bg-white border border-ink-200 p-4 sm:p-5 flex flex-col gap-2 min-w-0;
-    border-radius: 2px;
+    @apply bg-white border border-ink-200/80 rounded-xl p-4 sm:p-5 flex flex-col gap-2 min-w-0 shadow-card;
   }
-  .kpi-label { @apply text-[10.5px] uppercase tracking-[0.18em] text-ink-500 font-medium; }
-  .kpi-value { @apply text-2xl font-medium text-ink-900 tabular-nums; }
+  .kpi-label { @apply text-[12px] text-ink-500 font-medium; }
+  .kpi-value { @apply text-2xl font-semibold text-ink-900 tracking-tight; }
   .kpi-sub { @apply text-xs text-ink-500; }
 
-  .section-title {
-    @apply text-base font-medium text-ink-900 uppercase;
-    letter-spacing: 0.12em;
-  }
-  .section-sub { @apply text-sm text-ink-500 mt-1; }
+  .section-title { @apply text-[17px] leading-snug font-semibold text-ink-900 tracking-tight; }
+  .section-sub { @apply text-[13.5px] text-ink-500 mt-1 leading-relaxed; }
   .section-rule { @apply h-px bg-ink-200 my-4; }
 
   /* ---------- tables ---------- */
-  .tbl { @apply w-full text-sm border-collapse; }
+  .tbl { @apply w-full text-sm border-separate border-spacing-0; }
   :where(.tbl) th {
-    @apply text-left font-medium text-ink-500 uppercase
-           px-3 py-3 border-b border-ink-200 align-middle bg-bone-50 whitespace-nowrap;
-    font-size: 10.5px;
-    letter-spacing: 0.12em;
+    @apply text-left font-semibold text-ink-500 uppercase
+           px-3 py-2.5 border-b border-ink-200 align-middle bg-bone-50 whitespace-nowrap;
+    font-size: 11px;
+    letter-spacing: 0.05em;
   }
+  :where(.tbl) thead th:first-child { border-top-left-radius: 8px; }
+  :where(.tbl) thead th:last-child { border-top-right-radius: 8px; }
   :where(.tbl) td {
     @apply px-3 py-2 border-b border-ink-100 align-middle text-ink-800 tabular-nums;
   }
   :where(.tbl) tr:hover > td { @apply bg-bone-50; }
   :where(.tbl) td.cell-edit { @apply p-1.5; }
-  :where(.tbl tfoot, .tbl tr.row-total) > td { @apply bg-bone-200/60 font-medium text-ink-900; }
+  :where(.tbl tfoot, .tbl tr.row-total) > td { @apply bg-brand-50/70 font-semibold text-ink-900 border-b-0; }
   :where(.tbl tr.row-subtotal) > td { @apply bg-bone-100 font-medium; }
 
   /* ---------- tags ---------- */
-  .tag { @apply inline-flex items-center px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wider; border-radius: 2px; }
-  .tag-ok { @apply tag bg-emerald-50 text-emerald-800 border border-emerald-200; }
-  .tag-warn { @apply tag bg-amber-50 text-amber-800 border border-amber-200; }
-  .tag-bad { @apply tag bg-red-50 text-red-800 border border-red-200; }
-  .tag-info { @apply tag bg-bone-200 text-ink-700 border border-ink-200; }
+  .tag { @apply inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full whitespace-nowrap; }
+  .tag-ok { @apply tag bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200; }
+  .tag-warn { @apply tag bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200; }
+  .tag-bad { @apply tag bg-red-50 text-red-800 ring-1 ring-inset ring-red-200; }
+  .tag-info { @apply tag bg-bone-100 text-ink-700 ring-1 ring-inset ring-ink-200; }
 
   /* ---------- branding ---------- */
   .wordmark {
     font-family: var(--font-inter), ui-sans-serif, sans-serif;
-    font-weight: 600;
-    letter-spacing: 0.32em;
+    font-weight: 700;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
   }
   .eyebrow {
-    @apply text-[10.5px] uppercase text-ink-500 font-medium;
-    letter-spacing: 0.22em;
+    @apply text-[11px] uppercase text-ink-500 font-semibold;
+    letter-spacing: 0.07em;
   }
 
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: rgba(138,147,165,0.5) transparent; }
+  .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: rgba(138,147,165,0.45); border-radius: 8px; }
 }
 
-/* Phones: wide tables and fixed-column grids scroll sideways inside their card
-   instead of being cut off by the screen edge. */
-@media (max-width: 767px) {
-  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-}
+
+/* The 3D viewer's presentation mode takes the whole window. */
+body.present-open { overflow: hidden; }
 
 /* ---------- PDF report (print) ---------- */
 @page {

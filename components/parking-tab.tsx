@@ -3,6 +3,7 @@ import { useStore, useProject } from "@/lib/store";
 import { computeParking } from "@/lib/calc/parking";
 import { fmt0 } from "@/lib/format";
 import type { OtherUse } from "@/lib/types";
+import { StatTile } from "./ui/stat-tile";
 
 const M2_TO_SQFT = 10.7639;
 function fmtSqft(m2: number): string {
@@ -33,9 +34,9 @@ export default function ParkingTab() {
               <strong>m² / parking space</strong>.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 min-w-[320px]">
-            <label className="grid gap-1">
-              <span className="eyebrow text-ink-500 text-[10.5px]">Retail · m² per space</span>
+          <div className="grid grid-cols-2 gap-3 w-full sm:w-auto sm:min-w-[340px]">
+            <label className="grid gap-1.5 content-start">
+              <span className="text-[12.5px] font-medium text-ink-700">Retail · m² per space</span>
               <input
                 type="number"
                 step={5}
@@ -49,8 +50,8 @@ export default function ParkingTab() {
                 title="m² of retail GFA per required parking space (default 70 = 1 space per 70 m² of retail)"
               />
             </label>
-            <label className="grid gap-1">
-              <span className="eyebrow text-ink-500 text-[10.5px]">Parking · m² per space</span>
+            <label className="grid gap-1.5 content-start">
+              <span className="text-[12.5px] font-medium text-ink-700">Parking · m² per space</span>
               <input
                 type="number"
                 step={1}
@@ -203,12 +204,12 @@ export default function ParkingTab() {
                 </tr>
               ))}
               <tr className="row-subtotal">
-                <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">Residential required</td>
+                <td colSpan={4} className="text-right text-[12.5px]">Residential required</td>
                 <td className="text-right">{fmt0(r.requiredTotal)}</td>
               </tr>
               {r.retailRequired > 0 && (
                 <tr className="row-subtotal">
-                  <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">
+                  <td colSpan={4} className="text-right text-[12.5px]">
                     Retail required ({fmt0(r.retailM2)} m² ÷ {fmt0(r.retailM2PerSpaceUsed)} m²/space)
                   </td>
                   <td className="text-right">{fmt0(r.retailRequired)}</td>
@@ -216,22 +217,22 @@ export default function ParkingTab() {
               )}
               {r.otherUsesTotal > 0 && (
                 <tr className="row-subtotal">
-                  <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">Other uses required</td>
+                  <td colSpan={4} className="text-right text-[12.5px]">Other uses required</td>
                   <td className="text-right">{fmt0(r.otherUsesTotal)}</td>
                 </tr>
               )}
               <tr className="row-subtotal">
-                <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">Standard spaces required</td>
+                <td colSpan={4} className="text-right text-[12.5px]">Standard spaces required</td>
                 <td className="text-right">{fmt0(r.grandRequired)}</td>
               </tr>
               <tr className="row-subtotal">
-                <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">
+                <td colSpan={4} className="text-right text-[12.5px]">
                   + POD (Dubai DCD tiered rule, additional)
                 </td>
                 <td className="text-right">{fmt0(r.requiredPOD)}</td>
               </tr>
               <tr className="row-total">
-                <td colSpan={4} className="text-right uppercase tracking-[0.10em] text-[11px]">Total spaces required</td>
+                <td colSpan={4} className="text-right text-[12.5px]">Total spaces required</td>
                 <td className="text-right">{fmt0(r.grandRequiredWithPOD)}</td>
               </tr>
             </tbody>
@@ -303,20 +304,20 @@ export default function ParkingTab() {
             <>
               <div className="grid gap-2">
                 {/* Basements needed — headline answer */}
-                <div className="border border-ink-200 bg-white p-3 flex items-center justify-between gap-4 flex-wrap">
+                <div className={`rounded-lg ring-1 ring-inset p-4 flex items-center justify-between gap-4 flex-wrap ${basementsMatch ? "ring-emerald-200 bg-emerald-50/40" : "ring-amber-200 bg-amber-50/50"}`}>
                   <div>
-                    <div className="eyebrow text-ink-500 text-[10px]">Basements needed</div>
-                    <div className={`text-[22px] font-light tabular-nums mt-0.5 ${basementsMatch ? "text-emerald-700" : "text-amber-700"}`}>
+                    <div className="text-[12px] font-medium text-ink-500">Basements needed</div>
+                    <div className={`text-[26px] font-semibold tracking-tight mt-0.5 ${basementsMatch ? "text-emerald-700" : "text-amber-700"}`}>
                       {basementFootprint > 0 ? basementsNeeded : "—"}
                     </div>
-                    <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">
+                    <div className="text-[12px] text-ink-500 mt-0.5 leading-snug max-w-[640px]">
                       {basementFootprint > 0
                         ? `${fmt0(remainingForBasements)} m² left to cover ÷ ${fmt0(basementFootprint)} m² basement footprint, after ${fmt0(aboveGroundSurface)} m² already planned in ground/podium.`
                         : "Set Plot area in Setup to compute this."}
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[11px] text-ink-500">
+                    <div className="text-[12px] text-ink-500">
                       Current basement count: <strong className="text-ink-900">{basementCount}</strong>
                     </div>
                     {!basementsMatch && basementFootprint > 0 && (
@@ -325,27 +326,27 @@ export default function ParkingTab() {
                       </button>
                     )}
                     {basementsMatch && basementFootprint > 0 && (
-                      <div className="text-[10.5px] text-emerald-700 mt-1">✓ up to date</div>
+                      <div className="tag-ok mt-1.5">Up to date</div>
                     )}
                   </div>
                 </div>
                 {/* Inputs row */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="border border-ink-200 bg-white p-3">
-                    <div className="eyebrow text-ink-500 text-[10px]">Plot area (basement)</div>
-                    <div className="text-[18px] font-light tabular-nums text-ink-900 mt-0.5">
+                  <div className="rounded-lg ring-1 ring-inset ring-ink-200/80 bg-white p-3.5">
+                    <div className="text-[12px] font-medium text-ink-500">Plot area (basement)</div>
+                    <div className="text-[20px] font-semibold tracking-tight text-ink-900 mt-1">
                       {plotArea > 0 ? `${fmt0(plotArea)} m²` : "—"}
                     </div>
-                    <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">
+                    <div className="text-[11.5px] text-ink-500 mt-1 leading-snug">
                       {plotArea > 0 ? fmtSqft(plotArea) : "Set in Setup"}
                     </div>
                     <label className="block mt-2 pt-2 border-t border-ink-100">
-                      <span className="text-[10px] uppercase tracking-[0.08em] text-ink-500">Replace with (m²)</span>
+                      <span className="text-[11.5px] font-medium text-ink-600">Basement footprint override (m²)</span>
                       <input
                         type="number"
                         step={10}
                         min={0}
-                        className="cell-input text-right !text-[14px] tabular-nums mt-1 w-full"
+                        className="cell-input text-right tabular-nums mt-1 w-full"
                         value={project.basementFootprintM2 ?? ""}
                         placeholder={plotArea > 0 ? fmt0(plotArea) : "0"}
                         onChange={(e) => {
@@ -355,7 +356,7 @@ export default function ParkingTab() {
                         title="Override the basement footprint per level, if it covers less than the full plot (setbacks, shared party wall, etc). Leave empty to use the full plot area."
                       />
                     </label>
-                    <div className="text-[10.5px] text-ink-500 mt-1 leading-snug">
+                    <div className="text-[11.5px] text-ink-500 mt-1 leading-snug">
                       Leave empty to use the full plot footprint
                     </div>
                   </div>
@@ -364,13 +365,13 @@ export default function ParkingTab() {
                     value={`${basementCount}`}
                     sub={basementCount > 0 ? `${project.basements?.heightM ?? 0} m height each` : "Use “Apply” above to set a count"}
                   />
-                  <div className="border border-ink-200 bg-white p-3">
-                    <div className="eyebrow text-ink-500 text-[10px]">Ground floor parking (m²)</div>
+                  <div className="rounded-lg ring-1 ring-inset ring-ink-200/80 bg-white p-3.5">
+                    <div className="text-[12px] font-medium text-ink-500">Ground floor parking (m²)</div>
                     <input
                       type="number"
                       step={10}
                       min={0}
-                      className="cell-input text-right !text-[18px] font-light tabular-nums mt-0.5 w-full"
+                      className="cell-input text-right !text-[17px] font-semibold tabular-nums mt-1 w-full"
                       value={groundParking || ""}
                       placeholder="0"
                       onChange={(e) => {
@@ -379,17 +380,17 @@ export default function ParkingTab() {
                       }}
                       title="Surface on the ground floor dedicated to parking, if any. Leave 0 if the ground floor has no parking."
                     />
-                    <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">
+                    <div className="text-[11.5px] text-ink-500 mt-1 leading-snug">
                       Leave 0 if none
                     </div>
                   </div>
-                  <div className="border border-ink-200 bg-white p-3">
-                    <div className="eyebrow text-ink-500 text-[10px]">Podium parking per floor (m²)</div>
+                  <div className="rounded-lg ring-1 ring-inset ring-ink-200/80 bg-white p-3.5">
+                    <div className="text-[12px] font-medium text-ink-500">Podium parking per floor (m²)</div>
                     <input
                       type="number"
                       step={10}
                       min={0}
-                      className="cell-input text-right !text-[18px] font-light tabular-nums mt-0.5 w-full"
+                      className="cell-input text-right !text-[17px] font-semibold tabular-nums mt-1 w-full"
                       value={podiumParkingPerFloor || ""}
                       placeholder="0"
                       onChange={(e) => {
@@ -398,7 +399,7 @@ export default function ParkingTab() {
                       }}
                       title="Surface dedicated to parking on each podium floor, if any. Multiplied by the podium level count from Setup."
                     />
-                    <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">
+                    <div className="text-[11.5px] text-ink-500 mt-1 leading-snug">
                       × {podiumCount} podium level{podiumCount === 1 ? "" : "s"} (Setup)
                     </div>
                   </div>
@@ -425,7 +426,7 @@ export default function ParkingTab() {
               </div>
 
               {required > 0 && (
-                <div className={`text-[12px] mt-3 leading-snug ${enough ? "text-emerald-700" : "text-amber-900"}`}>
+                <div className={`rounded-lg p-3 text-[13px] mt-3 leading-snug ${enough ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200" : "bg-amber-50 text-amber-900 ring-1 ring-inset ring-amber-200"}`}>
                   {availTotal === 0 ? (
                     <>
                       No basements, ground or podium parking set yet. To fit the{" "}
@@ -438,7 +439,7 @@ export default function ParkingTab() {
                     </>
                   ) : enough ? (
                     <>
-                      ✓ Total available <strong>{fmt0(availTotal)} m²</strong> ({basementCount} basement{basementCount === 1 ? "" : "s"} + {fmt0(aboveGroundSurface)} m² ground/podium) covers the {fmt0(required)} m² required with a <strong>{fmt0(balance)} m²</strong> margin.
+                      Total available <strong>{fmt0(availTotal)} m²</strong> ({basementCount} basement{basementCount === 1 ? "" : "s"} + {fmt0(aboveGroundSurface)} m² ground/podium) covers the {fmt0(required)} m² required with a <strong>{fmt0(balance)} m²</strong> margin.
                       {basementSurface >= required && aboveGroundSurface > 0 && (
                         <> · You could fit it all in the basements alone ({fmt0(basementSurface)} m²) and free ground/podium for amenities or retail.</>
                       )}
@@ -461,26 +462,12 @@ export default function ParkingTab() {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="border border-ink-200 bg-white p-3">
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className="text-[18px] font-light tabular-nums text-ink-900 mt-0.5">{value}</div>
-      {sub && <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{sub}</div>}
-    </div>
-  );
+function Stat(props: { label: string; value: string; sub?: string }) {
+  return <StatTile {...props} />;
 }
 
 function BalanceStat({ value, ok, unset }: { value: number; ok: boolean; unset: boolean }) {
-  const color = unset ? "text-ink-400" : ok ? "text-emerald-700" : "text-red-700";
-  const label = "Surface balance";
   const display = unset ? "—" : `${value >= 0 ? "+" : ""}${fmt0(value)} m²`;
-  const sub = unset ? "Apply basements or set ground/podium parking above" : ok ? "Fits within basements ✓" : "Short of required";
-  return (
-    <div className="border border-ink-200 bg-white p-3">
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className={`text-[18px] font-light tabular-nums mt-0.5 ${color}`}>{display}</div>
-      <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{sub}</div>
-    </div>
-  );
+  const sub = unset ? "Apply basements or set ground/podium parking above" : ok ? "The planned surface fits the parking" : "Short of required";
+  return <StatTile label="Surface balance" value={display} sub={sub} tone={unset ? null : ok ? "ok" : "bad"} />;
 }

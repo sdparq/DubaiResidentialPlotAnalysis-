@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore, useProject } from "@/lib/store";
 import type { Project } from "@/lib/types";
 import { deleteCloudProject, useAuth } from "@/lib/cloud";
+import { ChevronDown, Copy, Plus, Trash2 } from "lucide-react";
 
 function relativeTime(ts: number): string {
   if (!ts) return "—";
@@ -73,87 +74,85 @@ export default function ProjectSwitcher() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="group flex items-center gap-3 text-left -m-1 p-1 rounded hover:bg-ink-800 transition-colors"
+        className="group flex items-center gap-2 text-left -ml-1.5 px-1.5 py-1 rounded-lg hover:bg-bone-100 transition-colors min-w-0 max-w-full"
         aria-expanded={open}
+        aria-haspopup="listbox"
       >
         <div className="min-w-0">
-          <div className="eyebrow text-bone-200/60">Project</div>
-          <div className="text-base font-medium text-bone-100 truncate max-w-[200px] sm:max-w-[360px]">{project.name || "Untitled Project"}</div>
+          <div className="text-[11px] text-ink-500 leading-none mb-1">Project</div>
+          <div className="text-[14.5px] font-semibold text-ink-900 truncate max-w-[150px] min-[420px]:max-w-[210px] sm:max-w-[340px] leading-tight">
+            {project.name || "Untitled Project"}
+          </div>
         </div>
-        <svg
-          className={`w-4 h-4 shrink-0 text-bone-200/70 transition-transform ${open ? "rotate-180" : ""}`}
-          viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-        ><path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <ChevronDown className={`w-4 h-4 shrink-0 text-ink-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
-        <div className="fixed sm:absolute z-40 top-20 sm:top-full left-4 right-4 sm:left-0 sm:right-auto sm:mt-2 sm:w-[420px] bg-white text-ink-900 border border-ink-200 shadow-xl">
-          <div className="px-4 py-3 border-b border-ink-200 flex items-center justify-between">
+        <div className="fixed sm:absolute z-50 top-16 sm:top-full left-3 right-3 sm:left-0 sm:right-auto sm:mt-2 sm:w-[440px] bg-white text-ink-900 border border-ink-200 rounded-xl shadow-lift overflow-hidden">
+          <div className="px-4 py-3 border-b border-ink-100 flex items-center justify-between gap-3">
             <div>
-              <div className="eyebrow text-ink-500">Projects</div>
-              <div className="text-xs text-ink-500 mt-0.5">{sorted.length} saved · auto-saved locally</div>
+              <div className="text-[13.5px] font-semibold text-ink-900">Projects</div>
+              <div className="text-[11.5px] text-ink-500 mt-0.5">{sorted.length} saved · auto-saved in this browser</div>
             </div>
-            <div className="flex items-center gap-1">
-              <button
-                className="px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.10em] border border-ink-300 hover:bg-bone-100 text-ink-800"
-                onClick={() => { loadSample(); setOpen(false); }}
-              >Sample</button>
-              <button
-                className="px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.10em] bg-brand-500 hover:bg-brand-600 text-white"
-                onClick={() => { newProject(); setOpen(false); }}
-              >+ New</button>
+            <div className="flex items-center gap-1.5">
+              <button className="btn btn-secondary btn-xs" onClick={() => { loadSample(); setOpen(false); }}>
+                Sample
+              </button>
+              <button className="btn btn-primary btn-xs" onClick={() => { newProject(); setOpen(false); }}>
+                <Plus className="w-3.5 h-3.5" /> New project
+              </button>
             </div>
           </div>
 
-          <ul className="max-h-[60vh] overflow-y-auto">
+          <ul className="max-h-[60vh] overflow-y-auto scroll-thin p-1.5">
             {sorted.map((p) => {
               const active = p.id === activeId;
               const units = p.program.reduce((s, c) => s + c.count, 0);
               return (
-                <li key={p.id} className={`border-b border-ink-100 last:border-b-0 ${active ? "bg-brand-50" : "hover:bg-bone-50"}`}>
-                  <div className="flex items-center gap-2 px-4 py-3">
+                <li key={p.id} className={`rounded-lg ${active ? "bg-brand-50" : "hover:bg-bone-50"}`}>
+                  <div className="flex items-center gap-2 px-2.5 py-2">
                     <button
-                      className="flex-1 min-w-0 text-left"
+                      className="flex-1 min-w-0 text-left flex items-center gap-3"
                       onClick={() => { switchProject(p.id); setOpen(false); }}
                     >
-                      <div className="flex items-center gap-2">
-                        {active && <span className="w-1.5 h-1.5 bg-brand-500 rounded-full shrink-0" />}
-                        <span className="font-medium text-sm truncate">{p.name || "Untitled Project"}</span>
-                      </div>
-                      <div className="text-[11px] text-ink-500 mt-0.5 flex items-center gap-2">
-                        <span>{units} units</span>
-                        <span>·</span>
-                        <span>{p.zone}</span>
-                        <span>·</span>
-                        <span>updated {relativeTime(p.updatedAt)}</span>
-                      </div>
+                      <span
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-[12px] font-semibold ${
+                          active ? "bg-brand-600 text-white" : "bg-bone-100 text-ink-600 ring-1 ring-inset ring-ink-200"
+                        }`}
+                        aria-hidden
+                      >
+                        {(p.name || "U").trim().charAt(0).toUpperCase()}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block font-medium text-[13.5px] truncate">{p.name || "Untitled Project"}</span>
+                        <span className="block text-[11.5px] text-ink-500 mt-0.5 truncate">
+                          {units > 0 ? `${units.toLocaleString("en-US")} units` : "No units yet"} · {p.zone} · {relativeTime(p.updatedAt)}
+                        </span>
+                      </span>
                     </button>
                     <button
                       title="Duplicate"
-                      className="p-1.5 text-ink-500 hover:text-ink-900 hover:bg-bone-200 transition-colors"
+                      aria-label={`Duplicate ${p.name}`}
+                      className="p-1.5 rounded-md text-ink-400 hover:text-ink-900 hover:bg-white transition-colors"
                       onClick={() => { duplicateProject(p.id); setOpen(false); }}
                     >
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <rect x="5" y="5" width="8" height="8" rx="1" />
-                        <path d="M3 11V4a1 1 0 011-1h7" />
-                      </svg>
+                      <Copy className="w-4 h-4" />
                     </button>
                     <button
                       title="Delete"
-                      className="p-1.5 text-ink-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                      aria-label={`Delete ${p.name}`}
+                      className="p-1.5 rounded-md text-ink-400 hover:text-red-700 hover:bg-red-50 transition-colors"
                       onClick={() => void handleDelete(p)}
                     >
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M3 4h10M6 4V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4M5 4l.5 9.5a1 1 0 001 1h3a1 1 0 001-1L11 4" strokeLinecap="round" />
-                      </svg>
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </li>
               );
             })}
           </ul>
-          <div className="px-4 py-2.5 bg-bone-50 border-t border-ink-200 text-[10.5px] uppercase tracking-[0.18em] text-ink-500">
-            Tip: rename in Setup → Project name
+          <div className="px-4 py-2.5 bg-bone-50 border-t border-ink-100 text-[11.5px] text-ink-500">
+            Rename a project in Setup → Project name.
           </div>
         </div>
       )}

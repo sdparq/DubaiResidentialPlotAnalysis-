@@ -2,6 +2,7 @@
 import { useStore, useProject } from "@/lib/store";
 import { computeLifts } from "@/lib/calc/lifts";
 import { fmt0, fmt2 } from "@/lib/format";
+import { StatTile } from "./ui/stat-tile";
 
 export default function LiftsTab() {
   const project = useProject();
@@ -18,7 +19,7 @@ export default function LiftsTab() {
       {/* DBC D.8.8 — primary recommendation */}
       <div className="card">
         <div className="mb-5">
-          <h2 className="section-title">Dubai Building Code · D.8.8 Passenger elevators</h2>
+          <h2 className="section-title">Passenger elevators · Dubai Building Code D.8.8</h2>
           <p className="section-sub">
             Minimum number of elevators for residential apartments derived from Figure D.13
             (population) + Figure D.14 (boarding floors). Uses Table D.5 for occupancy.
@@ -44,12 +45,14 @@ export default function LiftsTab() {
           <Kpi
             label="D.8.8 minimum"
             value={r.dbcTotal !== null ? `${r.dbcTotal} lifts` : "Out of chart"}
-            sub={r.dbcTotal !== null ? `${r.dbcFromPopulation} pop + ${r.dbcFromBoarding} board` : "VT consultant"}
+            sub={r.dbcTotal !== null ? `${r.dbcFromPopulation} population + ${r.dbcFromBoarding} boarding` : "VT consultant"}
+            emphasis
+            tone={r.dbcTotal !== null ? "ok" : "warn"}
           />
         </div>
 
-        <label className="grid gap-1 max-w-[220px]">
-          <span className="eyebrow">Boarding floors override</span>
+        <label className="grid gap-1.5 max-w-[260px]">
+          <span className="text-[12.5px] font-medium text-ink-700">Boarding floors override</span>
           <input
             type="number"
             min={1}
@@ -62,14 +65,14 @@ export default function LiftsTab() {
               else if (e.target.value === "") patch({ dbcBoardingFloors: undefined });
             }}
           />
-          <span className="text-[10.5px] text-ink-500">
+          <span className="text-[11.5px] text-ink-500 leading-snug">
             Number of floors with elevator stops (basements, ground, podium). Auto-derived
             from Setup → Floor breakdown unless you set it here.
           </span>
         </label>
 
         {r.dbcOutOfChart && (
-          <p className="text-[12px] text-amber-900 mt-3 leading-snug">
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900 mt-4 leading-snug">
             ⚠ Population ({fmt0(r.totalPopulation)}), occupied floors ({r.occupiedFloors})
             or boarding floors ({r.boardingFloors}) fall outside Figures D.13 / D.14. Per
             D.8.4, a VT Consultant must design the system using Method 2 (D.9).
@@ -153,7 +156,7 @@ export default function LiftsTab() {
               <tr className="row-total">
                 <td>RECOMMENDED</td>
                 <td className="text-right text-2xl text-brand-700 font-semibold">{fmt0(r.liftsRecommended)}</td>
-                <td className="text-ink-700 text-xs uppercase tracking-wider">{r.governing}</td>
+                <td className="text-ink-700 text-xs">{r.governing}</td>
               </tr>
             </tbody>
           </table>
@@ -163,14 +166,8 @@ export default function LiftsTab() {
   );
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="border border-ink-200 bg-white p-3">
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className="text-[18px] font-light tabular-nums text-ink-900 mt-0.5">{value}</div>
-      {sub && <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{sub}</div>}
-    </div>
-  );
+function Kpi(props: { label: string; value: string; sub?: string; emphasis?: boolean; tone?: "ok" | "warn" | "bad" | null }) {
+  return <StatTile {...props} />;
 }
 
 function SpecCard({
@@ -182,10 +179,10 @@ function SpecCard({
   recommended: ReturnType<typeof computeLifts>["passengerRecommended"] | null;
 }) {
   return (
-    <div className="border border-ink-200 p-4 grid gap-3">
+    <div className="rounded-lg ring-1 ring-inset ring-ink-200/80 p-4 grid gap-3 content-start">
       <div>
-        <div className="text-[14px] font-medium text-ink-900">{title}</div>
-        <div className="text-[10.5px] text-ink-500">{sub}</div>
+        <div className="text-[14.5px] font-semibold text-ink-900">{title}</div>
+        <div className="text-[12px] text-ink-500">{sub}</div>
       </div>
       <SpecBlock label={spec.category === "min" ? "Minimum" : "Recommended"} spec={spec} />
       {recommended && spec.ratedKg !== recommended.ratedKg && (
@@ -203,19 +200,19 @@ function SpecBlock({
   highlight?: boolean;
 }) {
   return (
-    <div className={`border ${highlight ? "border-brand-300 bg-brand-50" : "border-ink-100 bg-bone-50/50"} p-2.5 grid gap-1`}>
+    <div className={`rounded-lg ${highlight ? "ring-1 ring-inset ring-brand-200 bg-brand-50" : "bg-bone-50"} p-3 grid gap-1.5`}>
       <div className="flex items-baseline justify-between gap-2">
-        <span className={`eyebrow text-[10px] ${highlight ? "text-brand-700" : "text-ink-500"}`}>{label}</span>
-        <span className="text-[11px] tabular-nums text-ink-900">
+        <span className={`text-[12px] font-semibold ${highlight ? "text-brand-700" : "text-ink-600"}`}>{label}</span>
+        <span className="text-[12.5px] tabular-nums text-ink-900">
           <strong>{spec.ratedKg} kg</strong> · {spec.persons} persons
         </span>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-[11px] text-ink-700 tabular-nums">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-2 gap-y-0.5 text-[12px] text-ink-700 tabular-nums">
         <span>Cabin: <strong>{spec.cabinW_mm} × {spec.cabinD_mm}</strong> mm</span>
         <span>Height: <strong>{spec.cabinH_mm}</strong> mm</span>
         <span>Door: <strong>{spec.doorW_mm} × {spec.doorH_mm}</strong> mm</span>
       </div>
-      <div className="text-[10px] text-ink-500">{spec.doorType}</div>
+      <div className="text-[11.5px] text-ink-500">{spec.doorType}</div>
     </div>
   );
 }

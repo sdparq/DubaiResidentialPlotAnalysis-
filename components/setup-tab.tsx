@@ -9,6 +9,7 @@ import {
   type GfaUseCategory,
 } from "@/lib/types";
 import { useZoneLibrary } from "@/lib/use-zone-library";
+import { StackedBar } from "./ui/stacked-bar";
 import {
   ALL_CLASS_LETTERS,
   TYPOLOGY_KEYS,
@@ -35,6 +36,14 @@ const FLOOR_SECTIONS: FloorSectionDef[] = [
 ];
 
 const M2_TO_SQFT = 10.7639;
+
+/** Categorical colours for the uses — validated order (aqua · orange · blue · yellow). */
+const USE_COLORS: Record<GfaUseCategory, string> = {
+  residential: "#1baf7a",
+  retail: "#eb6834",
+  commercial: "#2a78d6",
+  hospitality: "#eda100",
+};
 
 function fmtSqft(m2: number): string {
   if (!Number.isFinite(m2) || m2 === 0) return "—";
@@ -74,7 +83,7 @@ export default function SetupTab() {
           <h2 className="section-title">Project</h2>
           <p className="section-sub">Identification and plot data.</p>
         </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-5">
           <Field label="Project name">
             <input className="cell-input" value={project.name} onChange={(e) => patch({ name: e.target.value })} />
           </Field>
@@ -94,8 +103,9 @@ export default function SetupTab() {
             />
           </Field>
         </div>
-        <p className="text-[11px] text-ink-500 mt-3">
-          Target GFA powers the percentage input mode in Common Areas (leave 0 if you prefer m²).
+        <p className="text-[12px] text-ink-500 mt-4">
+          Target GFA is the permissible GFA of the plot (affection plan / zoning). It drives the
+          percentage split below and the GFA check in the headline figures.
         </p>
       </div>
 
@@ -126,21 +136,29 @@ function DetectedClassCard({
     .map((m) => `${(m.pct * 100).toFixed(0)}% ${TYPOLOGY_LABELS[m.key]}`)
     .join(" · ");
   return (
-    <div className="card bg-brand-50 border-brand-200">
-      <div className="flex items-start gap-4 flex-wrap">
-        <div className="text-[42px] font-light text-brand-700 tabular-nums leading-none">{letter}</div>
-        <div className="flex-1 min-w-[280px]">
-          <div className="eyebrow text-brand-800 text-[10px]">Detected class</div>
-          <div className="text-[16px] font-medium text-ink-900 mt-0.5">{row.name}</div>
-          <p className="text-[12px] text-ink-700 leading-snug mt-1">{row.description}</p>
-          <div className="mt-3">
-            <div className="eyebrow text-ink-500 text-[10px]">Recommended unit mix</div>
-            <div className="text-[12.5px] text-ink-900 tabular-nums mt-1">{summary}</div>
-            <div className="text-[10.5px] text-ink-500 mt-1.5">
-              You can apply this mix in <strong>Typologies</strong> · floor heights in this
-              class: ground {row.floorHeights.ground} m, podium {row.floorHeights.podium} m,
-              typical {row.floorHeights.typical} m · parking {row.parkingAreaPerCarSqft} sqft/car.
-            </div>
+    <div className="card bg-gradient-to-br from-brand-50 to-white border-brand-200">
+      <div className="flex items-start gap-5 flex-wrap">
+        <div className="w-16 h-16 rounded-2xl bg-white ring-1 ring-brand-200 shadow-card flex flex-col items-center justify-center shrink-0">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-brand-600 leading-none">Class</span>
+          <span className="text-[30px] font-semibold text-brand-700 leading-none mt-0.5">{letter}</span>
+        </div>
+        <div className="flex-1 min-w-[260px]">
+          <div className="text-[12px] font-medium text-brand-700">Market class detected for this zone</div>
+          <div className="text-[18px] font-semibold text-ink-900 mt-0.5 tracking-tight">{row.name}</div>
+          <p className="text-[13px] text-ink-600 leading-snug mt-1">{row.description}</p>
+          <div className="mt-4 text-[12px] font-medium text-ink-500">Recommended unit mix</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5" aria-label={summary}>
+            {mixEntries.map((m) => (
+              <span key={m.key} className="inline-flex items-center gap-1.5 rounded-full bg-white ring-1 ring-inset ring-brand-200 px-2.5 py-1 text-[12px] text-ink-800">
+                <span className="font-semibold tabular-nums text-brand-700">{(m.pct * 100).toFixed(0)}%</span>
+                {TYPOLOGY_LABELS[m.key]}
+              </span>
+            ))}
+          </div>
+          <div className="text-[12px] text-ink-500 mt-3 leading-snug">
+            Apply this mix in <strong className="text-ink-700">Typologies</strong> · typical floor heights for this
+            class: ground {row.floorHeights.ground} m, podium {row.floorHeights.podium} m, typical{" "}
+            {row.floorHeights.typical} m · parking {row.parkingAreaPerCarSqft} sqft per car.
           </div>
         </div>
       </div>
@@ -212,8 +230,8 @@ function FloorBreakdownCard({
         </p>
       </div>
 
-      <div className="border border-ink-200">
-        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+      <div className="panel" style={{ minWidth: 470 }}>
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
           <div>Section</div>
           <div className="text-right">Floors</div>
           <div className="text-right">Height (m)</div>
@@ -225,11 +243,11 @@ function FloorBreakdownCard({
           return (
             <div
               key={def.key}
-              className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
+              className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[13px] tabular-nums border-b border-ink-100 last:border-b-0"
             >
               <div>
-                <div className="text-ink-900">{def.label}</div>
-                <div className="text-[10.5px] text-ink-500 leading-snug">{def.hint}</div>
+                <div className="text-ink-900 font-medium">{def.label}</div>
+                <div className="text-[11.5px] text-ink-500 leading-snug">{def.hint}</div>
               </div>
               <input
                 type="number"
@@ -259,10 +277,10 @@ function FloorBreakdownCard({
             </div>
           );
         })}
-        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums border-b border-ink-100 bg-brand-50/40">
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[13px] tabular-nums border-b border-ink-100 bg-brand-50/40">
           <div>
-            <div className="text-ink-900">Type floors <span className="text-brand-700">· derived</span></div>
-            <div className="text-[10.5px] text-ink-500 leading-snug">
+            <div className="text-ink-900 font-medium">Type floors <span className="tag-info ml-1 !text-[10.5px]">derived</span></div>
+            <div className="text-[11.5px] text-ink-500 leading-snug">
               Set the tower floor-plate area in <strong>Distribution</strong> to compute this.
             </div>
           </div>
@@ -284,16 +302,16 @@ function FloorBreakdownCard({
               : "—"}
           </div>
         </div>
-        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums bg-brand-50 font-medium">
-          <div className="uppercase tracking-[0.08em] text-[10.5px] text-brand-800">
-            Above ground (visible building)
+        <div className="grid grid-cols-[1fr_90px_110px_110px] gap-1 px-3 py-2.5 items-center text-[13px] tabular-nums bg-brand-50/70 font-semibold">
+          <div className="text-brand-800">
+            Above ground <span className="font-normal text-brand-700">· visible building</span>
           </div>
           <div className="text-right text-brand-800">{totalAboveGround}</div>
           <div></div>
           <div className="text-right text-brand-800">{totalHeightAbove.toFixed(1)} m</div>
         </div>
       </div>
-      <p className="text-[11px] text-ink-500 mt-3 leading-snug">
+      <p className="text-[12px] text-ink-500 mt-3 leading-snug">
         {basementSec.count > 0
           ? `Plus ${basementSec.count} basement level(s) — ${(basementSec.count * basementSec.heightM).toFixed(1)} m below ground.`
           : "No basements configured."}
@@ -379,17 +397,18 @@ function GfaBreakdownCard({
           </p>
         </div>
         {total > 0 && (
-          <div className="flex items-center gap-3">
-            <div className="text-[11px] text-ink-500">
-              Reference Target GFA:{" "}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-[12.5px] text-ink-500">
+              Target GFA{" "}
               <strong className="text-ink-900 tabular-nums">
-                {total.toLocaleString("en-US")} m² · {fmtSqft(total)}
-              </strong>
+                {total.toLocaleString("en-US")} m²
+              </strong>{" "}
+              <span className="tabular-nums">· {fmtSqft(total)}</span>
             </div>
             {gfaMismatchPct > 0.005 && sumGFA > 0 && (
               <button
                 onClick={rebalanceTo100}
-                className="text-[10.5px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+                className="btn btn-secondary btn-xs"
                 title="Scale every row proportionally so the sum equals Target GFA"
               >
                 Rebalance to 100%
@@ -400,14 +419,33 @@ function GfaBreakdownCard({
       </div>
 
       {total <= 0 && (
-        <div className="border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[12.5px] mb-4 leading-snug">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 p-3 text-[13px] mb-4 leading-snug">
           Set a <strong>Target GFA</strong> above to enable the percentage input mode.
           You can still enter absolute m² per use without it.
         </div>
       )}
 
-      <div className="border border-ink-200">
-        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+      {sumGFA > 0 && (
+        <div className="mb-5">
+          <StackedBar
+            label="GFA split by use"
+            segments={GFA_CATEGORIES.map((c) => {
+              const gfa = gfaFor(c.key);
+              const share = sumGFA > 0 ? (gfa / sumGFA) * 100 : 0;
+              return {
+                key: c.key,
+                label: c.label,
+                value: gfa,
+                color: USE_COLORS[c.key],
+                display: `${Math.round(gfa).toLocaleString("en-US")} m² · ${share.toFixed(share < 10 ? 1 : 0)}%`,
+              };
+            })}
+          />
+        </div>
+      )}
+
+      <div className="panel" style={{ minWidth: 640 }}>
+        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
           <div>Use</div>
           <div className="text-right">Input</div>
           <div className="text-center">Mode</div>
@@ -422,11 +460,14 @@ function GfaBreakdownCard({
           return (
             <div key={c.key}>
               <div
-                className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-1.5 items-center text-[12px] tabular-nums border-b border-ink-100"
+                className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-2 items-center text-[13px] tabular-nums border-b border-ink-100"
               >
-                <div>
-                  <div className="text-ink-900">{c.label}</div>
-                  <div className="text-[10.5px] text-ink-500 leading-snug">{c.hint}</div>
+                <div className="flex items-start gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-sm mt-1 shrink-0" style={{ background: USE_COLORS[c.key] }} aria-hidden />
+                  <div>
+                    <div className="text-ink-900 font-medium">{c.label}</div>
+                    <div className="text-[11.5px] text-ink-500 leading-snug">{c.hint}</div>
+                  </div>
                 </div>
                 <div className="relative">
                   <input
@@ -444,15 +485,20 @@ function GfaBreakdownCard({
                     {item.mode === "absolute" ? "m²" : "%"}
                   </span>
                 </div>
-                <div className="text-center">
-                  <button
-                    onClick={() => toggleMode(c.key)}
-                    disabled={total <= 0 && item.mode === "absolute"}
-                    title={total <= 0 ? "Set Target GFA to enable percent mode" : "Switch input mode"}
-                    className="px-2 py-0.5 text-[10px] uppercase tracking-[0.10em] border border-ink-300 text-ink-700 hover:bg-bone-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    → {item.mode === "absolute" ? "%" : "m²"}
-                  </button>
+                <div className="flex justify-center">
+                  <div className="seg" title={total <= 0 ? "Set Target GFA to enable percent mode" : "Enter this use in m² or as % of Target GFA"}>
+                    <button
+                      className="seg-btn !px-2 !py-0.5 !text-[11.5px]"
+                      data-active={item.mode === "absolute"}
+                      onClick={() => item.mode !== "absolute" && toggleMode(c.key)}
+                    >m²</button>
+                    <button
+                      className="seg-btn !px-2 !py-0.5 !text-[11.5px] disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-active={item.mode === "percent"}
+                      disabled={total <= 0 && item.mode === "absolute"}
+                      onClick={() => item.mode !== "percent" && toggleMode(c.key)}
+                    >%</button>
+                  </div>
                 </div>
                 {(() => {
                   const gfa = gfaFor(c.key);
@@ -469,8 +515,8 @@ function GfaBreakdownCard({
             </div>
           );
         })}
-        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums bg-brand-50 font-medium">
-          <div className="uppercase tracking-[0.08em] text-[10.5px] text-brand-800">Total of uses</div>
+        <div className="grid grid-cols-[1fr_120px_90px_110px_120px_80px] gap-1 px-3 py-2.5 items-center text-[13px] tabular-nums bg-brand-50/70 font-semibold">
+          <div className="text-brand-800">Total of uses</div>
           <div></div>
           <div></div>
           <div className="text-right text-brand-800">{Math.round(sumGFA).toLocaleString("en-US")}</div>
@@ -480,7 +526,7 @@ function GfaBreakdownCard({
       </div>
 
       {total > 0 && gfaMismatchPct > 0.005 && sumGFA > 0 && (
-        <p className="text-[11.5px] mt-3 leading-snug text-amber-900">
+        <p className="text-[12.5px] mt-3 leading-snug text-amber-900">
           Σ GFA across uses = <strong>{Math.round(sumGFA).toLocaleString("en-US")} m²</strong>{" "}
           ({sumPctGFA.toFixed(1)}%) but Target GFA is{" "}
           <strong>{total.toLocaleString("en-US")} m²</strong>. Adjust the rows or click
@@ -493,10 +539,10 @@ function GfaBreakdownCard({
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
-    <label className="grid gap-2">
-      <span className="eyebrow">{label}</span>
+    <label className="grid gap-1.5 content-start">
+      <span className="text-[12.5px] font-medium text-ink-700">{label}</span>
       {children}
-      {hint && <span className="text-[10.5px] text-ink-500 tabular-nums">{hint}</span>}
+      {hint && <span className="text-[11.5px] text-ink-500 tabular-nums">{hint}</span>}
     </label>
   );
 }

@@ -18,6 +18,7 @@ import {
   useAuth,
   useCloudAutoSave,
 } from "@/lib/cloud";
+import { Cloud, CloudOff, X } from "lucide-react";
 
 function statusLabel(s: SaveStatus, savedAt: number | null, linked: boolean): string {
   if (s === "saving") return "Saving…";
@@ -274,11 +275,10 @@ export default function CloudStatus() {
 
   if (!enabled) return null;
 
-  const ghostBtn =
-    "px-3 py-2 text-[11px] font-medium uppercase tracking-[0.10em] border border-bone-100/25 text-bone-100 hover:border-bone-100/60 hover:bg-ink-800 transition-colors";
+  const ghostBtn = "btn btn-secondary btn-xs";
 
   if (loading) {
-    return <div className="text-[11px] uppercase tracking-[0.10em] text-bone-200/60">Cloud…</div>;
+    return <div className="text-[12px] text-ink-400">Cloud…</div>;
   }
 
   if (!user) {
@@ -306,20 +306,21 @@ export default function CloudStatus() {
       }
     }
     return (
-      <form onSubmit={handleSignIn} className="flex items-center gap-1 flex-wrap justify-end max-w-[320px]">
+      <form onSubmit={handleSignIn} className="relative flex items-center gap-1.5">
+        <CloudOff className="w-4 h-4 text-ink-400 hidden md:block" aria-hidden />
         <input
           type="password"
           value={pwd}
           onChange={(e) => setPwd(e.target.value)}
           placeholder="Team password"
           autoComplete="current-password"
-          className="px-2 py-1.5 text-[12px] bg-ink-800 border border-bone-100/25 text-bone-100 placeholder-bone-200/40 focus:border-bone-100/60 focus:outline-none w-[140px]"
+          className="cell-input !py-1.5 !text-[12.5px] w-[124px] sm:w-[150px]"
         />
         <button type="submit" className={ghostBtn} disabled={signingIn || !pwd}>
           {signingIn ? "…" : "Unlock"}
         </button>
         {pwdErr && (
-          <span className="basis-full text-[10px] text-red-300 text-right leading-snug">{pwdErr}</span>
+          <span className="absolute right-0 top-full mt-1 whitespace-nowrap text-[11px] text-red-700 bg-white border border-red-200 rounded-md px-2 py-1 shadow-sm z-10">{pwdErr}</span>
         )}
       </form>
     );
@@ -374,23 +375,26 @@ export default function CloudStatus() {
       )}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-2 py-1.5 text-[11px] uppercase tracking-[0.10em] text-bone-100 hover:bg-ink-800 transition-colors"
+        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12.5px] text-ink-600 hover:bg-bone-100 transition-colors"
         title="Cloud workspace"
       >
-        <span className={`w-2 h-2 rounded-full ${lockedBy ? "bg-amber-400" : "bg-brand-500"}`} />
-        <span className="hidden md:inline text-bone-200/80 normal-case tracking-normal">
+        <Cloud className="w-4 h-4 text-ink-400" aria-hidden />
+        <span className={`w-2 h-2 rounded-full ${lockedBy ? "bg-amber-500" : status === "error" ? "bg-red-500" : "bg-emerald-500"}`} />
+        <span className="hidden md:inline">
           {lockedBy ? "Read-only · locked" : statusLabel(status, savedAt, !!project?.cloudId)}
         </span>
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-[320px] bg-ink-900 border border-bone-100/15 text-bone-100 z-50 shadow-xl">
-          <div className="px-4 py-3 border-b border-bone-100/10">
-            <div className="text-[11px] uppercase tracking-[0.10em] text-bone-200/60">Cloud workspace</div>
-            <div className="text-sm">Connected</div>
-            <div className="text-[10px] text-bone-200/50 mt-0.5">{statusLabel(status, savedAt, !!project?.cloudId)}</div>
-            <label className="block mt-2 text-[10px] uppercase tracking-[0.10em] text-bone-200/60">
-              Your name <span className="normal-case tracking-normal">(shown to teammates when you hold a project)</span>
+        <div className="absolute right-0 top-full mt-2 w-[340px] max-w-[calc(100vw-24px)] bg-white border border-ink-200 rounded-xl text-ink-900 z-50 shadow-lift overflow-hidden">
+          <div className="px-4 py-3 border-b border-ink-100">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-[13.5px] font-semibold">Team cloud · connected</span>
+            </div>
+            <div className="text-[11.5px] text-ink-500 mt-0.5">{statusLabel(status, savedAt, !!project?.cloudId)}</div>
+            <label className="block mt-3 text-[11.5px] font-medium text-ink-600">
+              Your name <span className="font-normal text-ink-400">(shown to teammates when you hold a project)</span>
               <input
                 type="text"
                 value={deviceName}
@@ -399,57 +403,49 @@ export default function CloudStatus() {
                   setDeviceName(e.target.value);
                   setDeviceLabel(e.target.value);
                 }}
-                className="mt-1 w-full px-2 py-1.5 text-[12px] normal-case tracking-normal bg-ink-800 border border-bone-100/25 text-bone-100 placeholder-bone-200/40 focus:border-bone-100/60 focus:outline-none"
+                className="cell-input mt-1 !py-1.5 !text-[12.5px]"
               />
             </label>
           </div>
 
-          <div className="px-4 py-3 border-b border-bone-100/10 flex items-center gap-2">
+          <div className="px-4 py-2.5 border-b border-ink-100 flex items-center gap-2">
             {!project?.cloudId ? (
-              <button onClick={handleSaveToCloud} className={ghostBtn}>
+              <button onClick={handleSaveToCloud} className="btn btn-primary btn-xs">
                 Save current to cloud
               </button>
             ) : (
-              <span className="text-[10px] uppercase tracking-[0.10em] text-bone-200/50">
-                Auto-saving
-              </span>
+              <span className="text-[11.5px] text-emerald-700 font-medium">Auto-saving</span>
             )}
             <button onClick={refresh} className={`${ghostBtn} ml-auto`} disabled={listLoading}>
               {listLoading ? "…" : "Refresh"}
             </button>
           </div>
 
-          <div className="max-h-[280px] overflow-y-auto">
-            {err && <div className="px-4 py-2 text-[11px] text-red-300">{err}</div>}
+          <div className="max-h-[280px] overflow-y-auto scroll-thin p-1.5">
+            {err && <div className="px-3 py-2 text-[11.5px] text-red-700">{err}</div>}
             {cloudList === null ? (
-              <div className="px-4 py-3 text-[11px] text-bone-200/50">Loading…</div>
+              <div className="px-3 py-3 text-[12px] text-ink-400">Loading…</div>
             ) : cloudList.length === 0 ? (
-              <div className="px-4 py-3 text-[11px] text-bone-200/50">No cloud projects yet.</div>
+              <div className="px-3 py-3 text-[12px] text-ink-400">No cloud projects yet.</div>
             ) : (
               cloudList.map((row) => {
                 const isActive = project?.cloudId === row.id;
                 return (
                   <div
                     key={row.id}
-                    className={`px-4 py-2 flex items-center gap-2 border-b border-bone-100/5 hover:bg-ink-800 ${
-                      isActive ? "bg-ink-800" : ""
-                    }`}
+                    className={`px-2.5 py-2 flex items-center gap-2 rounded-lg ${isActive ? "bg-brand-50" : "hover:bg-bone-50"}`}
                   >
-                    <button
-                      onClick={() => handleOpenCloud(row.id)}
-                      className="flex-1 min-w-0 text-left"
-                    >
-                      <div className="text-sm truncate">{row.name}</div>
-                      <div className="text-[10px] text-bone-200/50">
-                        updated {relativeTime(row.updatedAt)}
-                      </div>
+                    <button onClick={() => handleOpenCloud(row.id)} className="flex-1 min-w-0 text-left">
+                      <div className="text-[13px] font-medium truncate">{row.name}</div>
+                      <div className="text-[11px] text-ink-500">updated {relativeTime(row.updatedAt)}</div>
                     </button>
                     <button
                       onClick={() => handleDeleteCloud(row.id)}
-                      className="text-[10px] uppercase tracking-[0.10em] text-bone-200/40 hover:text-red-300"
+                      className="p-1.5 rounded-md text-ink-400 hover:text-red-700 hover:bg-red-50"
                       title="Delete from cloud"
+                      aria-label={`Delete ${row.name} from the cloud`}
                     >
-                      ✕
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 );
@@ -457,9 +453,9 @@ export default function CloudStatus() {
             )}
           </div>
 
-          <div className="px-4 py-3 border-t border-bone-100/10 flex justify-end">
+          <div className="px-4 py-2.5 border-t border-ink-100 flex justify-end bg-bone-50">
             <button onClick={() => signOut()} className={ghostBtn}>
-              Lock
+              Lock cloud
             </button>
           </div>
         </div>

@@ -304,13 +304,13 @@ export default function PlanTrace({
               <polygon
                 points={tracePoints.map((p) => `${p.x},${p.y}`).join(" ")}
                 fill="rgba(100,125,87,0.15)"
-                stroke={edgeColors ? "none" : "#3f5135"}
+                stroke={edgeColors ? "none" : "#0b6c5a"}
                 strokeWidth={px(1.6)}
               />
             )}
             {tracePoints.length >= 2 && tracePoints.map((p, i) => {
               const next = tracePoints[(i + 1) % tracePoints.length];
-              const color = edgeColors?.[i] ?? "#3f5135";
+              const color = edgeColors?.[i] ?? "#0b6c5a";
               return (
                 <line
                   key={`e-${i}`}
@@ -330,7 +330,7 @@ export default function PlanTrace({
                 cx={p.x}
                 cy={p.y}
                 r={px(4.5)}
-                fill={edgeColors?.[i] ?? "#3f5135"}
+                fill={edgeColors?.[i] ?? "#0b6c5a"}
                 stroke="white"
                 strokeWidth={px(1.2)}
               />
@@ -369,7 +369,7 @@ export default function PlanTrace({
               <polyline
                 points={liveVertexPath.map((p) => `${p.x},${p.y}`).join(" ")}
                 fill="none"
-                stroke="#647d57"
+                stroke="#0d7f69"
                 strokeWidth={px(2.4)}
                 strokeDasharray={`${px(7)},${px(4)}`}
               />
@@ -380,7 +380,7 @@ export default function PlanTrace({
                 cx={p.x}
                 cy={p.y}
                 r={i === 0 ? px(6.5) : px(5.5)}
-                fill={i === 0 ? "#a17e4c" : "#647d57"}
+                fill={i === 0 ? "#b88a42" : "#0d7f69"}
                 stroke="white"
                 strokeWidth={px(1.5)}
               />
@@ -402,7 +402,7 @@ export default function PlanTrace({
                   key={`cand-${i}`}
                   points={c.map((p) => `${p.x},${p.y}`).join(" ")}
                   fill={hovered ? "rgba(100,125,87,0.35)" : "rgba(100,125,87,0.10)"}
-                  stroke={hovered ? "#3f5135" : "#647d57"}
+                  stroke={hovered ? "#0b6c5a" : "#0d7f69"}
                   strokeWidth={px(2)}
                   style={{ cursor: "pointer" }}
                   onClick={(e) => {
@@ -423,7 +423,7 @@ export default function PlanTrace({
       {W > 0 && (
         <>
           <div
-            className="absolute top-2 right-2 flex flex-col border border-ink-200 bg-white/95 shadow-sm z-10"
+            className="absolute top-2 right-2 flex flex-col rounded-lg overflow-hidden ring-1 ring-ink-900/10 bg-white/95 shadow-sm z-10"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <button
@@ -443,7 +443,7 @@ export default function PlanTrace({
               title="Fit to view"
             >⤢</button>
           </div>
-          <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 bg-white/85 border border-ink-200 text-[9.5px] text-ink-500 z-10 pointer-events-none select-none">
+          <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-white/85 ring-1 ring-ink-900/10 text-[10.5px] text-ink-500 z-10 pointer-events-none select-none">
             {zoom > 1 ? `${zoom.toFixed(1)}× · ` : ""}scroll to zoom
             {zoom > 1 ? " · drag to pan · click to place" : ""}
           </div>
@@ -463,16 +463,16 @@ function CalibrationDisplay({
   const sw = px(2);
   return (
     <g>
-      <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#a17e4c" strokeWidth={sw} strokeDasharray={`${px(6)},${px(4)}`} />
-      <circle cx={p1.x} cy={p1.y} r={r} fill="#a17e4c" stroke="white" strokeWidth={sw * 0.7} />
-      <circle cx={p2.x} cy={p2.y} r={r} fill="#a17e4c" stroke="white" strokeWidth={sw * 0.7} />
+      <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#b88a42" strokeWidth={sw} strokeDasharray={`${px(6)},${px(4)}`} />
+      <circle cx={p1.x} cy={p1.y} r={r} fill="#b88a42" stroke="white" strokeWidth={sw * 0.7} />
+      <circle cx={p2.x} cy={p2.y} r={r} fill="#b88a42" stroke="white" strokeWidth={sw * 0.7} />
       <rect
         x={mid.x - px(38)}
         y={mid.y - px(12)}
         width={px(76)}
         height={px(24)}
-        fill="#fff8e7"
-        stroke="#a17e4c"
+        fill="#fbf7ef"
+        stroke="#b88a42"
         strokeWidth={sw * 0.6}
         rx={px(2)}
       />
@@ -482,7 +482,7 @@ function CalibrationDisplay({
         textAnchor="middle"
         fontSize={px(13)}
         fontWeight="600"
-        fill="#574128"
+        fill="#5c4122"
       >{metres.toFixed(2)} m</text>
     </g>
   );
@@ -504,13 +504,13 @@ function CalibrationLive({
           y1={points[0].y}
           x2={second.x}
           y2={second.y}
-          stroke="#a17e4c"
+          stroke="#b88a42"
           strokeWidth={sw}
           strokeDasharray={`${px(6)},${px(4)}`}
         />
       )}
       {points.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={r} fill="#a17e4c" stroke="white" strokeWidth={sw * 0.7} />
+        <circle key={i} cx={p.x} cy={p.y} r={r} fill="#b88a42" stroke="white" strokeWidth={sw * 0.7} />
       ))}
     </g>
   );

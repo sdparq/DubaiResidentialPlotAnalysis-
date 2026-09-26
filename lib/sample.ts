@@ -1,92 +1,118 @@
-import type { Project, Typology, ProgramCell, CommonArea } from "./types";
+import type { Project, Typology, ProgramCell } from "./types";
 
-const t = (
+/**
+ * The demo scheme every new browser opens with — a fictional residential tower
+ * on a 64 × 50 m plot in Business Bay (market class C), fully worked through
+ * every step so each tab, the KPI bar, the 3D massing and the report have
+ * something meaningful to show:
+ *
+ *   plot 3,200 m² · target GFA 38,400 m² (FAR 12) · 95 % residential + 5 % retail
+ *   2B + G + 3P + 35 type floors · tower plate 1,040 m² (12 m setbacks)
+ *   415 units (Studio → 3 Bedrooms) · parking for 520 cars (493 required)
+ *   in 2 basements + 3 podium levels
+ *
+ * Numbers are illustrative, not a real project. Balconies are 14.4 % of each
+ * unit (class C matrix) and are excluded from GFA.
+ */
+
+const BALCONY_SHARE = 0.144;
+
+function unit(
   id: string,
   name: string,
   category: Typology["category"],
-  internalArea: number,
-  balconyArea: number,
+  totalM2: number,
   occupancy: number,
-  parkingPerUnit: number
-): Typology => ({ id, name, category, internalArea, balconyArea, occupancy, parkingPerUnit });
-
-const STUDIO = t("studio-a", "Studio Type A", "Studio", 31, 8, 1.5, 1);
-const BR1A = t("1br-a", "1BR Type A", "1BR", 64.81, 12, 2, 1);
-const BR1B = t("1br-b", "1BR Type B", "1BR", 61.75, 12, 2, 1);
-const BR1C = t("1br-c", "1BR Type C", "1BR", 64.07, 12, 2, 1);
-const BR1D = t("1br-d", "1BR Type D", "1BR", 63.74, 12, 2, 1);
-const BR2A = t("2br-a", "2BR Type A", "2BR", 89.61, 33, 3, 1);
-const BR2B = t("2br-b", "2BR Type B", "2BR", 86.09, 33, 3, 1);
-const BR2C = t("2br-c", "2BR Type C", "2BR", 85.31, 33, 3, 1);
-const BR2D = t("2br-d", "2BR Type D", "2BR", 73.76, 33, 3, 1);
-const BR3A = t("3br-a", "3BR Type A", "3BR", 133.4, 33, 5, 2);
-
-const TYPOLOGIES = [STUDIO, BR1A, BR1B, BR1C, BR1D, BR2A, BR2B, BR2C, BR2D, BR3A];
-
-function row(floor: number, counts: Record<string, number>): ProgramCell[] {
-  return Object.entries(counts).map(([typologyId, count]) => ({ floor, typologyId, count }));
+  parkingPerUnit: number,
+): Typology {
+  return {
+    id,
+    name,
+    category,
+    internalArea: Number((totalM2 * (1 - BALCONY_SHARE)).toFixed(1)),
+    balconyArea: Number((totalM2 * BALCONY_SHARE).toFixed(1)),
+    occupancy,
+    parkingPerUnit,
+  };
 }
 
-const PROGRAM: ProgramCell[] = [
-  ...row(1, { "studio-a": 23, "1br-a": 1, "1br-b": 12, "1br-c": 2, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 0, "3br-a": 1 }),
-  ...row(2, { "studio-a": 23, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(3, { "studio-a": 23, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(4, { "studio-a": 23, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(5, { "studio-a": 23, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(6, { "studio-a": 23, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(7, { "studio-a": 22, "1br-a": 0, "1br-b": 12, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
-  ...row(8, { "studio-a": 15, "1br-a": 0, "1br-b": 7, "1br-c": 1, "1br-d": 1, "2br-a": 1, "2br-b": 2, "2br-c": 2, "2br-d": 2, "3br-a": 1 }),
+const DEMO_TYPOLOGIES: Typology[] = [
+  unit("demo-studio", "Studio", "Studio", 42, 1.5, 1),
+  unit("demo-1br", "1 Bedroom", "1BR", 74, 1.8, 1),
+  unit("demo-2br", "2 Bedrooms", "2BR", 118, 3, 1),
+  unit("demo-3br", "3 Bedrooms", "3BR", 168, 4, 2),
 ];
 
-const ca = (id: string, name: string, area: number, floors: number, countAsGFA: boolean, notes?: string): CommonArea => ({
-  id, name, area, floors, countAsGFA, notes,
-});
+/** Same unit mix on a band of floors: [studio, 1BR, 2BR, 3BR] per floor. */
+function band(from: number, to: number, counts: [number, number, number, number]): ProgramCell[] {
+  const cells: ProgramCell[] = [];
+  for (let floor = from; floor <= to; floor++) {
+    DEMO_TYPOLOGIES.forEach((t, i) => {
+      if (counts[i] > 0) cells.push({ floor, typologyId: t.id, count: counts[i] });
+    });
+  }
+  return cells;
+}
 
-const COMMON_AREAS: CommonArea[] = [
-  ca("lobby-a", "Lobby A", 137.3, 1, true, "Ground floor"),
-  ca("lobby-b", "Lobby B", 134.15, 1, true, "Ground floor"),
-  ca("cs-f1", "Corridor + Stairs (F1)", 324.64, 1, true, "Floor 1"),
-  ca("cs-f2-7", "Corridor + Stairs (F2-F7)", 318.4, 6, true, "Floors 2 to 7"),
-  ca("cs-f8", "Corridor (F8)", 216.28, 1, true, "Floor 8"),
-  ca("lifts", "Lifts", 35.34, 8, true, "All floors"),
-  ca("services", "Services", 15.4, 8, true, "All floors"),
-  ca("mep", "MEP", 30.5, 8, true, "All floors"),
-  ca("pool-pump", "Pool Pump", 30.88, 1, true, "Floor 7"),
-  ca("sauna", "Sauna", 71.17, 1, true, "Floor 7"),
-  ca("health-club", "Health Club", 119.19, 1, true, "Floor 8"),
-  ca("gym-f8", "Gym (F8)", 238.5, 1, true, "Floor 8"),
-  ca("outdoor-pool-f1", "Outdoor Area + Pool (F1)", 924.25, 1, false, "Floor 1 — Open air"),
-  ca("pool-f8", "Pool (F8)", 320.16, 1, false, "Floor 8 — Open air"),
-  ca("multipurpose", "Multipurpose", 120.55, 1, false, "Roof — Open air"),
-  ca("aquagym", "Aquagym", 48.75, 1, false, "Roof — Open air"),
-  ca("gym-roof", "Gym (Roof)", 111.96, 1, false, "Roof — Open air"),
-  ca("yoga", "Yoga", 59.7, 1, false, "Roof — Open air"),
-  ca("clubhouse", "Club House", 108.15, 1, false, "Roof — Open air"),
-  ca("bbq", "BBQ", 82.01, 1, false, "Roof — Open air"),
-  ca("family-sitting", "Family Sitting", 124.7, 1, false, "Roof — Open air"),
-  ca("zen", "Zen Garden", 46.68, 1, false, "Roof — Open air"),
+const DEMO_PROGRAM: ProgramCell[] = [
+  ...band(1, 10, [3, 6, 3, 1]),
+  ...band(11, 30, [2, 5, 4, 1]),
+  // Larger units on the upper floors.
+  ...band(31, 35, [0, 3, 4, 2]),
 ];
 
-export const PRODUCTION_CITY_SAMPLE: Project = {
-  id: "production-city-sample",
+export const DEMO_SAMPLE: Project = {
+  id: "demo-sample",
   createdAt: 0,
   updatedAt: 0,
-  name: "Production City — Sample",
-  zone: "Production City (IMPZ)",
+  name: "Sample · Business Bay tower",
+  zone: "Business Bay",
   use: "RESIDENTIAL",
-  plotArea: 6764.31,
-  numFloors: 8,
+  plotArea: 3200,
+  plotMode: "rectangular",
+  plotFrontage: 64,
+  plotDepth: 50,
+  targetGFA: 38400,
+  gfaBreakdown: {
+    residential: { mode: "percent", value: 95 },
+    retail: { mode: "percent", value: 5 },
+  },
+  basements: { count: 2, heightM: 3.5 },
+  ground: { count: 1, heightM: 4.5 },
+  podium: { count: 3, heightM: 3.6 },
+  typeFloors: { count: 35, heightM: 3.6 },
+  numFloors: 35,
   floorHeight: 3.6,
+  towerFootprintM2: 1040,
   shaftPerUnit: 0.5,
   prmPercent: 0.02,
-  typologies: TYPOLOGIES,
-  program: PROGRAM,
-  commonAreas: COMMON_AREAS,
-  parking: [
-    { id: "b1", name: "Basement 01", standard: 204, prm: 2 },
-    { id: "gf", name: "Ground Floor (Gate Level)", standard: 156, prm: 7 },
-  ],
+  typologies: DEMO_TYPOLOGIES,
+  typologiesSeeded: true,
+  typologyMix: { Studio: 17, "1BR": 42, "2BR": 31, "3BR": 10 },
+  program: DEMO_PROGRAM,
+  commonAreas: [],
+  parking: [],
   otherUses: [],
+  podiumParkingPerFloorM2: 2200,
+  groundParkingM2: 0,
+  groundSetbackM: 2,
+  podiumSetbackM: 2,
+  towerSetbackM: 12,
+  facade: {
+    mode: "residential",
+    panelWidthM: 3.2,
+    balconyDepthM: 1.8,
+    balconyEveryNBays: 2,
+    solidPanelRatio: 0.16,
+    balconyLayout: "rhythm",
+    patternSeed: 7,
+    groundPodiumTreatment: "fins",
+    finSpacingM: 1.2,
+    finWidthM: 0.15,
+    finDepthM: 0.4,
+    podiumPool: true,
+    podiumLoungeBbq: true,
+  },
   lifts: {
     cabinKg: 1275,
     speed: 1.75,
@@ -98,11 +124,6 @@ export const PRODUCTION_CITY_SAMPLE: Project = {
     dcdMinUnitsThreshold: 100,
   },
   notes: "",
-  plotFrontage: 80,
-  plotDepth: 84.55,
-  groundSetbackM: 3,
-  podiumSetbackM: 3,
-  towerSetbackM: 6,
 };
 
 export function newId(prefix = "p"): string {

@@ -13,6 +13,10 @@ import { useZoneLibrary } from "@/lib/use-zone-library";
 import { classForZone } from "@/lib/zone-classes";
 import { computeAreas } from "@/lib/calc/areas";
 import { computeProgram } from "@/lib/calc/program";
+import { computeParking } from "@/lib/calc/parking";
+import { computeLifts } from "@/lib/calc/lifts";
+import { projectMetrics } from "@/lib/metrics";
+import { useMassingSnapshot } from "@/lib/snapshot";
 
 const M2_TO_SQFT = 10.7639;
 const fmt0 = (n: number) => (Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "—");
@@ -64,6 +68,10 @@ function ReportDocument() {
 
   const detectedClass = useMemo(() => classForZone(project.zone, library), [project.zone, library]);
   const program = useMemo(() => computeProgram(project), [project]);
+  const parking = useMemo(() => computeParking(project), [project]);
+  const lifts = useMemo(() => computeLifts(project), [project]);
+  const metrics = useMemo(() => projectMetrics(project), [project]);
+  const snapshot = useMassingSnapshot(project.id);
 
   const a = useMemo(() => computeAreas(project), [project]);
   const target = a.targetGFA;
@@ -105,22 +113,26 @@ function ReportDocument() {
       {/* ─────────────────────────────── Header ────────────────────────────── */}
       <div className="bg-ink-900 text-bone-100 px-10 pt-10 pb-8 relative overflow-hidden">
         <div
-          className="absolute inset-0 opacity-[0.05]"
+          className="absolute inset-0 opacity-[0.06]"
           style={{
             backgroundImage:
-              "linear-gradient(0deg, transparent 96%, #8faa78 96%), linear-gradient(90deg, transparent 96%, #8faa78 96%)",
+              "linear-gradient(0deg, transparent 96%, #2a9d84 96%), linear-gradient(90deg, transparent 96%, #2a9d84 96%)",
             backgroundSize: "34px 34px",
           }}
         />
         <div className="relative">
-          <div className="text-[10px] uppercase tracking-[0.4em] text-brand-500 mb-6">
-            Plot Feasibility · Areas &amp; Ratios
+          <div className="flex items-center justify-between mb-6">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-brand-300">
+              Feasibility study · {BRAND.market}
+            </div>
+            <div className="text-[11px] font-bold tracking-[0.22em] text-bone-100/80">{BRAND.wordmark}</div>
           </div>
-          <h1 className="text-[36px] leading-[1.05] font-light tracking-tight mb-3">{project.name}</h1>
+          <h1 className="text-[34px] leading-[1.08] font-semibold tracking-tight mb-3">{project.name}</h1>
           <div className="flex items-center gap-3 text-[12px] text-bone-200/85 flex-wrap">
             {project.zone && <span>{project.zone}</span>}
+            <span className="px-2 py-0.5 rounded-full bg-white/10 text-bone-100 text-[10.5px] font-medium">{metrics.heightCode}</span>
             {classRow && detectedClass && (
-              <span className="px-2 py-0.5 border border-brand-500/60 text-brand-300 text-[10px] uppercase tracking-[0.14em]">
+              <span className="px-2 py-0.5 rounded-full ring-1 ring-brand-400/60 text-brand-200 text-[10.5px] font-medium">
                 Class {detectedClass} · {classRow.name}
               </span>
             )}
@@ -129,7 +141,7 @@ function ReportDocument() {
             </span>
           </div>
         </div>
-        <div className="relative grid grid-cols-4 gap-px bg-bone-100/15 border border-bone-100/15 mt-8">
+        <div className="relative grid grid-cols-4 gap-px bg-bone-100/15 border border-bone-100/15 rounded-lg overflow-hidden mt-8">
           {[
             ["Plot area", m2(project.plotArea)],
             ["Target GFA", m2(target)],
@@ -141,17 +153,27 @@ function ReportDocument() {
             ["Basements", basementCount > 0 ? `${fmt0(basementCount)} × ${fmt0(basementFootprint)} m²` : "—"],
           ].map(([l, v]) => (
             <div key={l} className="bg-ink-900 px-3 py-3">
-              <div className="text-[8px] uppercase tracking-[0.18em] text-bone-200/50">{l}</div>
-              <div className="text-[16px] font-light tabular-nums text-bone-100 mt-0.5">{v}</div>
+              <div className="text-[9px] font-medium text-bone-200/60">{l}</div>
+              <div className="text-[16px] font-semibold tabular-nums text-bone-100 mt-0.5">{v}</div>
             </div>
           ))}
         </div>
       </div>
 
+      {snapshot && (
+        <figure className="rpt-avoid-break border-b border-ink-200">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={snapshot.dataUrl} alt="3D massing of the scheme" className="block w-full h-[430px] object-contain bg-[#eceff3]" />
+          <figcaption className="px-10 py-2 text-[9px] text-ink-500 bg-bone-50">
+            3D massing · {snapshot.caption} · indicative, not a design
+          </figcaption>
+        </figure>
+      )}
+
       <div className="px-10 py-8">
         {/* ───────────────────────── Areas summary ──────────────────────── */}
         <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-2 mb-4">
-          <h2 className="text-[19px] font-medium tracking-tight text-ink-900">Areas summary</h2>
+          <h2 className="text-[19px] font-semibold tracking-tight text-ink-900">Areas summary</h2>
         </div>
 
         <div className="grid grid-cols-2 gap-6 items-start mb-5">
@@ -208,13 +230,13 @@ function ReportDocument() {
 
         {/* ─────────────────────────── Ratios ───────────────────────────── */}
         <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-2 mb-4 mt-8">
-          <h2 className="text-[19px] font-medium tracking-tight text-ink-900">Efficiency ratios</h2>
+          <h2 className="text-[19px] font-semibold tracking-tight text-ink-900">Efficiency ratios</h2>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {ratios.map(([label, num, den, hint]) => (
-            <div key={label} className="border border-brand-600 bg-brand-50 p-4 rpt-avoid-break">
-              <div className="text-[8.5px] uppercase tracking-[0.18em] text-brand-800">{label}</div>
-              <div className="text-[28px] font-light tabular-nums text-brand-900 mt-1">
+            <div key={label} className="rounded-lg border border-brand-200 bg-brand-50 p-4 rpt-avoid-break">
+              <div className="text-[9.5px] font-semibold text-brand-800">{label}</div>
+              <div className="text-[28px] font-semibold tracking-tight tabular-nums text-brand-900 mt-1">
                 {num > 0 && den > 0 ? pct((num / den) * 100) : "—"}
               </div>
               <div className="text-[9px] text-ink-500 tabular-nums mt-0.5">
@@ -225,9 +247,69 @@ function ReportDocument() {
           ))}
         </div>
 
+        {/* ───────────────────────── Programme ───────────────────────────── */}
+        {program.totalUnits > 0 && (
+          <div className="rpt-avoid-break">
+            <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-2 mb-4 mt-8">
+              <h2 className="text-[19px] font-semibold tracking-tight text-ink-900">Unit mix</h2>
+              <span className="text-[11px] text-ink-500">
+                {fmt0(program.totalUnits)} units · avg {fmt0(program.totalSellable / program.totalUnits)} m² sellable
+              </span>
+            </div>
+            <Tbl
+              head={["Typology", "Units", "Share", "Interior m²", "Balcony m²", "Sellable m²"]}
+              right={[1, 2, 3, 4, 5]}
+              rows={program.byTypology
+                .filter((t) => t.totalUnits > 0)
+                .map((t) => [
+                  t.typology.name,
+                  fmt0(t.totalUnits),
+                  pct(t.pctOfTotal * 100),
+                  fmt1(t.typology.internalArea),
+                  fmt1(t.typology.balconyArea),
+                  fmt0(t.totalSellable),
+                ])}
+              foot={["Total", fmt0(program.totalUnits), "100%", "", "", fmt0(program.totalSellable)]}
+            />
+          </div>
+        )}
+
+        {(parking.grandRequiredWithPOD > 0 || lifts.totalUnits > 0) && (
+          <div className="rpt-avoid-break">
+            <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-2 mb-4 mt-8">
+              <h2 className="text-[19px] font-semibold tracking-tight text-ink-900">Parking &amp; vertical transport</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-6 items-start">
+              <Tbl
+                head={["Parking", "Spaces"]}
+                right={[1]}
+                rows={[
+                  ["Residential (per typology ratios)", fmt0(parking.requiredTotal)],
+                  ...(parking.retailRequired > 0 ? [["Retail", fmt0(parking.retailRequired)]] : []),
+                  ...(parking.otherUsesTotal > 0 ? [["Other uses", fmt0(parking.otherUsesTotal)]] : []),
+                  ["People of Determination (DCD, additional)", fmt0(parking.requiredPOD)],
+                  ["Planned capacity (basements + ground + podium)", metrics.parkingProvided > 0 ? fmt0(metrics.parkingProvided) : "—"],
+                ] as (string | number)[][]}
+                foot={["Total required", fmt0(parking.grandRequiredWithPOD)]}
+              />
+              <Tbl
+                head={["Lifts · Dubai Building Code D.8.8", ""]}
+                right={[1]}
+                rows={[
+                  ["Population (Table D.5)", fmt0(lifts.totalPopulation)],
+                  ["Occupied floors", fmt0(lifts.occupiedFloors)],
+                  ["Boarding floors", fmt0(lifts.boardingFloors)],
+                  ["Passenger cabin (Table D.6)", `${lifts.passengerMin.ratedKg} kg · ${lifts.passengerMin.persons} p`],
+                ]}
+                foot={["Passenger lifts (minimum)", lifts.dbcTotal !== null ? fmt0(lifts.dbcTotal) : "VT study"]}
+              />
+            </div>
+          </div>
+        )}
+
         {/* footer */}
         <div className="border-t-2 border-ink-900 pt-3 mt-10 flex items-baseline justify-between text-[9px] text-ink-500">
-          <span className="uppercase tracking-[0.22em]">{BRAND.wordmark} · {BRAND.descriptor}</span>
+          <span className="font-semibold tracking-[0.18em]">{BRAND.wordmark} · {BRAND.descriptor}</span>
           <span>
             {project.name} — generated{" "}
             {now.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}{" "}
@@ -243,6 +325,7 @@ function ReportDocument() {
 
 export default function ReportOverlay({ onClose }: { onClose: () => void }) {
   const project = useProject();
+  const snapshot = useMassingSnapshot(project.id);
 
   useEffect(() => {
     document.body.classList.add("report-open");
@@ -263,23 +346,19 @@ export default function ReportOverlay({ onClose }: { onClose: () => void }) {
   // so the printed document is exactly this overlay in normal flow.
   return createPortal(
     <div className="report-overlay fixed inset-0 z-[90] bg-ink-900/80 overflow-y-auto py-8 px-4">
-      <div className="report-toolbar sticky top-0 z-10 max-w-[820px] mx-auto flex items-center justify-between gap-3 bg-ink-900 border border-bone-100/20 px-4 py-2.5 mb-4">
-        <div className="text-bone-100 text-[12px]">
-          <span className="uppercase tracking-[0.18em] text-[10px] text-bone-200/60 mr-3">Report preview</span>
-          {project.name}
+      <div className="report-toolbar sticky top-0 z-10 max-w-[820px] mx-auto flex items-center justify-between gap-3 rounded-xl bg-white shadow-lift px-4 py-2.5 mb-4">
+        <div className="min-w-0">
+          <div className="text-[11px] font-medium text-ink-500">
+            Report preview
+            {!snapshot && <span className="text-ink-400"> · open 3D Massing once to include the model view</span>}
+          </div>
+          <div className="text-[13.5px] font-semibold text-ink-900 truncate">{project.name}</div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => window.print()}
-            className="px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] bg-brand-500 text-white hover:bg-brand-600 transition-colors"
-            title="Opens the print dialog — choose “Save as PDF”"
-          >
-            ⬇ Save as PDF
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => window.print()} className="btn btn-primary" title="Opens the print dialog — choose “Save as PDF”">
+            Save as PDF
           </button>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] border border-bone-100/30 text-bone-100 hover:bg-white/10 transition-colors"
-          >
+          <button onClick={onClose} className="btn btn-secondary">
             Close
           </button>
         </div>

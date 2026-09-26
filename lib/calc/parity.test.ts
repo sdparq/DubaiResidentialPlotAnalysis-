@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { PRODUCTION_CITY_SAMPLE } from "../sample";
+import { REFERENCE_PROJECT } from "./fixtures/reference-project";
 import { analyze } from "./index";
 
-describe("Production City — parity vs Excel", () => {
-  const r = analyze(PRODUCTION_CITY_SAMPLE);
+describe("Reference scheme — parity vs the Excel workbook", () => {
+  const r = analyze(REFERENCE_PROJECT);
 
   it("program totals match Excel", () => {
     expect(r.program.totalUnits).toBe(346);

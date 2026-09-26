@@ -23,9 +23,9 @@ const TIER_LABELS: Record<(typeof TIER_TARGETS)[number], string> = {
   tower: "Tower",
 };
 const TIER_COLORS: Record<(typeof TIER_TARGETS)[number], string> = {
-  ground: "#8a9a76",
-  podium: "#a17e4c",
-  tower: "#3f5135",
+  ground: "#eb6834",
+  podium: "#2a78d6",
+  tower: "#1baf7a",
 };
 const TIER_POLY_FIELD = {
   ground: "groundPolygon",
@@ -487,10 +487,11 @@ export default function PlotTab() {
     <div className="grid gap-6">
       <div className="card">
         <div className="mb-5">
-          <h2 className="section-title">Plot drawing</h2>
+          <h2 className="section-title">Affection plan</h2>
           <p className="section-sub">
-            Upload the affection plan or plot drawing, then trace the parcel boundary by clicking each corner and
-            calibrate the scale by clicking two known points and entering the cota.
+            Upload the affection plan (PDF) or any plot drawing. Vector PDFs are read directly: the parcel is
+            detected from its highlight colours and the scale from the printed dimensions. Otherwise, trace the
+            corners and calibrate with one known distance.
           </p>
         </div>
 
@@ -500,7 +501,7 @@ export default function PlotTab() {
 
         {parcel && !parcel.imageDataUrl && (phase === "done" || phase === "idle") && (
           <div className="grid gap-4">
-            <div className="border border-amber-300 bg-amber-50 text-amber-900 p-4 text-sm">
+            <div className="rounded-lg border border-amber-300 bg-amber-50 text-amber-900 p-4 text-sm">
               <div className="font-medium mb-1">Plan image removed to free browser storage</div>
               <div className="text-amber-800/90">
                 Your browser&apos;s local storage filled up, so the plan drawing image
@@ -514,14 +515,14 @@ export default function PlotTab() {
         )}
 
         {phase === "rendering" && (
-          <div className="border border-ink-200 bg-bone-50 p-8 text-center">
+          <div className="rounded-xl border border-ink-200/80 bg-bone-50 p-10 text-center">
             <div className="mx-auto w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-4" />
             <div className="text-sm font-medium text-ink-900">Loading the plot…</div>
           </div>
         )}
 
         {phase === "error" && (
-          <div className="border border-red-200 bg-red-50 text-red-800 p-4 text-sm">
+          <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 p-4 text-sm">
             <div className="font-medium mb-1">Could not process the file</div>
             <div className="text-red-700/80">{error}</div>
             <button className="btn btn-secondary mt-3" onClick={() => setPhase("idle")}>Try another file</button>
@@ -532,7 +533,7 @@ export default function PlotTab() {
           <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-6">
             {/* Image with overlay */}
             <div>
-              <div className="border border-ink-200 bg-bone-50 overflow-hidden">
+              <div className="rounded-xl border border-ink-200/80 bg-bone-50 overflow-hidden">
                 <PlanTrace
                   parcel={parcel}
                   mode={traceMode}
@@ -660,8 +661,8 @@ export default function PlotTab() {
                   <div className="text-[11px] text-ink-400">Trace the polygon first</div>
                 ) : autoCalib && !autoCalib.confident && autoCalib.matches.length >= 2 && !isCalibrated && traceMode !== "calibrating" ? (
                   <div className="grid gap-2">
-                    <div className="border border-amber-200 bg-amber-50 p-2">
-                      <div className="text-[10.5px] uppercase tracking-[0.10em] text-amber-900 font-medium mb-1">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+                      <div className="text-[12px] text-amber-900 font-semibold mb-1">
                         {autoCalib.matches.length} of {autoCalib.totalEdges} edges matched
                         {autoCalib.deviationPct > 0 && ` · deviation ${autoCalib.deviationPct.toFixed(1)}%`}
                         {" · needs review"}
@@ -746,9 +747,9 @@ export default function PlotTab() {
               </StepBlock>
 
               {isCalibrated && (
-                <div className="border border-emerald-200 bg-emerald-50 text-emerald-900 p-3 text-xs">
-                  <div className="font-semibold uppercase tracking-[0.10em] text-[10.5px]">Polygon ready</div>
-                  <div className="mt-1">Plot area: <strong>{fmt2(livePolygonArea)} m²</strong></div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 p-4 text-[13px]">
+                  <div className="font-semibold text-[13.5px]">Plot captured</div>
+                  <div className="mt-1">Plot area <strong className="text-[16px]">{fmt2(livePolygonArea)} m²</strong></div>
                   <div className="text-emerald-800/80 mt-0.5">
                     Saved to Massing tab in polygon mode.
                   </div>
@@ -835,7 +836,7 @@ export default function PlotTab() {
                       );
                     })}
                   </div>
-                  <p className="text-[10.5px] text-ink-500 mt-2 leading-snug">
+                  <p className="text-[12px] text-ink-500 mt-3 leading-snug">
                     Click each corner on the drawing; click the first point (or Done) to close.
                     Every block becomes its own volume in Massing, sharing that tier&apos;s floor
                     count and height. <strong>Same as tower</strong> copies the tower outlines onto
@@ -865,14 +866,14 @@ function StepBlock({
   disabled?: boolean;
 }) {
   return (
-    <div className={`border ${done ? "border-emerald-200 bg-emerald-50/40" : "border-ink-200 bg-white"} p-3 ${disabled ? "opacity-60" : ""}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold ${done ? "bg-emerald-600 text-white" : "bg-ink-200 text-ink-700"}`}>
+    <div className={`rounded-xl ring-1 ring-inset ${done ? "ring-emerald-200 bg-emerald-50/40" : "ring-ink-200/80 bg-white"} p-4 ${disabled ? "opacity-60" : ""}`}>
+      <div className="flex items-center gap-2.5 mb-1.5">
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11.5px] font-semibold ${done ? "bg-emerald-600 text-white" : "bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-200"}`}>
           {done ? "✓" : step}
         </span>
-        <span className="eyebrow text-ink-700">{title}</span>
+        <span className="text-[13.5px] font-semibold text-ink-900">{title}</span>
       </div>
-      <p className="text-[11px] text-ink-500 mb-2 leading-relaxed">{description}</p>
+      <p className="text-[12px] text-ink-500 mb-3 leading-relaxed">{description}</p>
       {children}
     </div>
   );
@@ -887,7 +888,7 @@ function Dropzone({
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
       onDragLeave={() => setDrag(false)}
       onDrop={(e) => { e.preventDefault(); setDrag(false); onFiles(e.dataTransfer.files); }}
-      className={`block border-2 border-dashed text-center py-14 px-6 cursor-pointer transition-colors ${
+      className={`block rounded-2xl border-2 border-dashed text-center py-14 px-6 cursor-pointer transition-colors ${
         drag ? "border-brand-500 bg-brand-50" : "border-ink-200 bg-bone-50 hover:border-brand-400 hover:bg-brand-50/50"
       }`}
     >
@@ -898,13 +899,21 @@ function Dropzone({
         className="hidden"
         onChange={(e) => onFiles(e.target.files)}
       />
-      <div className="mx-auto w-10 h-10 mb-4 flex items-center justify-center border border-ink-300 rounded-full">
-        <svg className="w-5 h-5 text-ink-700" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <div className="mx-auto w-14 h-14 mb-4 flex items-center justify-center rounded-2xl bg-white ring-1 ring-ink-200 shadow-card">
+        <svg className="w-6 h-6 text-brand-600" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
           <path d="M10 14V4M5 9l5-5 5 5M3 16h14" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
-      <div className="text-sm font-medium text-ink-900">Drop the plot drawing here, or click to browse</div>
-      <div className="text-xs text-ink-500 mt-1">PDF, JPG, PNG · stored locally in your browser</div>
+      <div className="text-[16px] font-semibold text-ink-900">Drop the affection plan here, or click to browse</div>
+      <div className="text-[13px] text-ink-500 mt-1">PDF, JPG or PNG · processed in your browser, never uploaded</div>
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        {["Parcel boundary detected", "Scale read from the dimensions", "Plot area computed", "Footprints for the 3D model"].map((t) => (
+          <span key={t} className="inline-flex items-center gap-1.5 rounded-full bg-white ring-1 ring-inset ring-ink-200 px-3 py-1 text-[12px] text-ink-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand-500" aria-hidden />
+            {t}
+          </span>
+        ))}
+      </div>
     </label>
   );
 }

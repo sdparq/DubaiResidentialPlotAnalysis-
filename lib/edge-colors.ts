@@ -1,20 +1,21 @@
 /**
- * Distinguishable colors for polygon edges. Picked from a hand-tuned palette that
- * works on the bone-coloured background of the app and lines up with the brand accents.
+ * Distinguishable colours for polygon edges — the validated categorical order
+ * (adjacent edges stay apart under colour-vision deficiency), then extra
+ * neutrals for plots with more than eight edges.
  */
 export const EDGE_PALETTE = [
-  "#647d57", // brand green
-  "#a17e4c", // brand gold
-  "#5b87b8", // muted blue
-  "#b86b6b", // muted red
-  "#8669a8", // muted purple
-  "#c2a13b", // ochre
-  "#3f8a78", // teal
-  "#a06a3a", // brown
-  "#7a8b5e", // olive
-  "#6a4c93", // violet
-  "#d68a3c", // amber
-  "#4f7f9a", // dusty blue
+  "#2a78d6", // blue
+  "#eb6834", // orange
+  "#1baf7a", // aqua
+  "#eda100", // yellow
+  "#e87ba4", // magenta
+  "#008300", // green
+  "#4a3aa7", // violet
+  "#e34948", // red
+  "#0d7f69", // brand teal
+  "#b88a42", // sand
+  "#5a6479", // slate
+  "#8a5a3a", // brown
 ];
 
 export function edgeColor(index: number): string {

@@ -4,6 +4,7 @@ import { useProject } from "@/lib/store";
 import { computeAreas } from "@/lib/calc/areas";
 import { computeProgram } from "@/lib/calc/program";
 import { type GfaUseCategory } from "@/lib/types";
+import { StatTile } from "./ui/stat-tile";
 
 const M2_TO_SQFT = 10.7639;
 function fmtSqft(m2: number): string {
@@ -121,9 +122,17 @@ export default function SummaryTab() {
           />
         </div>
 
+        <AreaBars
+          rows={[
+            { key: "bua", label: "BUA · built", value: constructionBUA },
+            { key: "gfa", label: "GFA · FAR-counted", value: totalGFA },
+            { key: "gsa", label: "GSA · sellable", value: gsaTotal },
+          ]}
+        />
+
         {/* Warnings */}
         {gfaOverTarget && (
-          <p className="text-[11.5px] text-amber-900 mb-3 leading-snug">
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900 mb-4 leading-snug">
             Σ GFA = {fmtM2(totalGFA)} exceeds the Target GFA of {fmtM2(target)} by{" "}
             <strong>{fmtM2(totalGFA - target)}</strong>. Reduce a use allocation or rebalance
             in <em>Setup → GFA breakdown</em>.
@@ -195,15 +204,22 @@ export default function SummaryTab() {
             total
           />
           {a.balconyGfaFactor > 0 && a.usesMatrix && (
-            <p className="text-[10.5px] text-ink-500 px-3 py-1.5 leading-snug border-t border-ink-100">
+            <p className="text-[12px] text-ink-500 px-3 py-2 leading-snug border-t border-ink-100">
               Balconies in GFA: {Math.round(a.balconyGfaFactor * 100)} % (Typologies). The apartments
               consume {fmt0(a.apartmentsGFA)} m² of GFA = {fmt0(a.apartmentsInterior)} m² interior +{" "}
               {fmt0(a.balconiesGFA)} m² of balconies; the sellable figures above take the whole balcony.
             </p>
           )}
-          {a.usesMatrix && Math.abs(a.apartmentsDrift) > Math.max(1, a.apartmentsQuota * 0.01) && (
-            <p className="text-[10.5px] text-amber-800 px-3 py-1.5 leading-snug border-t border-ink-100">
-              ⚠ The matrix consumes {fmt0(a.apartmentsGFA)} m² of GFA
+          {a.usesMatrix && a.apartmentsQuota <= 0 && (
+            <p className="text-[12px] text-amber-800 bg-amber-50/60 px-3 py-2 leading-snug border-t border-ink-100">
+              The matrix holds {fmt0(a.matrixUnits)} units ({fmt0(a.apartmentsGFA)} m² of GFA) but there is no
+              Apartments GFA target yet — set Target GFA and the Residential use in <em>Setup → GFA breakdown</em>{" "}
+              to check the matrix against it.
+            </p>
+          )}
+          {a.usesMatrix && a.apartmentsQuota > 0 && Math.abs(a.apartmentsDrift) > Math.max(1, a.apartmentsQuota * 0.01) && (
+            <p className="text-[12px] text-amber-800 bg-amber-50/60 px-3 py-2 leading-snug border-t border-ink-100">
+              The matrix consumes {fmt0(a.apartmentsGFA)} m² of GFA
               {a.balconyGfaFactor > 0 ? ` (interior + ${Math.round(a.balconyGfaFactor * 100)} % of balconies)` : " (interior)"} against the{" "}
               {fmt0(a.apartmentsQuota)} m² Apartments GFA target from Distribution —{" "}
               <strong>
@@ -214,8 +230,8 @@ export default function SummaryTab() {
               <em>Apartments → Apply to N floors</em> to realign it with the target.
             </p>
           )}
-          {a.usesMatrix && Math.abs(a.apartmentsDrift) <= Math.max(1, a.apartmentsQuota * 0.01) && (
-            <p className="text-[10.5px] text-ink-500 px-3 py-1.5 leading-snug border-t border-ink-100">
+          {a.usesMatrix && a.apartmentsQuota > 0 && Math.abs(a.apartmentsDrift) <= Math.max(1, a.apartmentsQuota * 0.01) && (
+            <p className="text-[12px] text-ink-500 px-3 py-2 leading-snug border-t border-ink-100">
               Matches the Apartments tab: {fmt0(a.matrixUnits)} units ={" "}
               {fmt0(program.totalSellable)} m² sellable. Apartments GFA target from Distribution:{" "}
               {fmt0(a.apartmentsQuota)} m².
@@ -261,17 +277,22 @@ export default function SummaryTab() {
           {ratios.map((r) => {
             const ok = r.num > 0 && r.den > 0;
             return (
-              <div key={r.label} className="border border-ink-200 bg-white p-4">
-                <div className="eyebrow text-ink-500 text-[10px]">{r.label}</div>
-                <div className="text-[26px] font-light tabular-nums mt-1 text-ink-900">
+              <div key={r.label} className="rounded-xl ring-1 ring-inset ring-ink-200/80 bg-white p-4">
+                <div className="text-[12.5px] font-semibold text-ink-600">{r.label}</div>
+                <div className="text-[30px] font-semibold tracking-tight mt-1 text-ink-900">
                   {ok ? `${((r.num / r.den) * 100).toFixed(1)}%` : "—"}
                 </div>
-                <div className="text-[11px] text-ink-500 mt-1 tabular-nums">
+                {ok && (
+                  <div className="mt-2 h-1.5 rounded-full bg-brand-100 overflow-hidden" aria-hidden>
+                    <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.min(100, (r.num / r.den) * 100)}%` }} />
+                  </div>
+                )}
+                <div className="text-[12px] text-ink-500 mt-2 tabular-nums">
                   {ok
                     ? `${r.numLabel} ${fmt0(r.num)} m² ÷ ${r.denLabel} ${fmt0(r.den)} m²`
                     : "needs both totals above"}
                 </div>
-                <p className="text-[10.5px] text-ink-400 mt-2 leading-snug">{r.hint}</p>
+                <p className="text-[12px] text-ink-400 mt-2 leading-snug">{r.hint}</p>
               </div>
             );
           })}
@@ -283,11 +304,36 @@ export default function SummaryTab() {
 
 function DerivBlock({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="border border-ink-200 mb-4">
-      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200 text-[10.5px] uppercase tracking-[0.10em] text-ink-600 font-medium">
+    <div className="panel mb-4" style={{ minWidth: 640 }}>
+      <div className="px-3 py-2.5 bg-bone-50 border-b border-ink-200/80 text-[12.5px] text-ink-800 font-semibold">
         {title}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** Magnitude comparison of the three totals — one series, one hue, values at the bar ends. */
+function AreaBars({ rows }: { rows: { key: string; label: string; value: number }[] }) {
+  const max = Math.max(...rows.map((r) => r.value), 0);
+  if (max <= 0) return null;
+  return (
+    <div className="grid gap-2.5 mb-6" role="img" aria-label={rows.map((r) => `${r.label} ${fmt0(r.value)} m²`).join(", ")}>
+      {rows.map((r) => (
+        <div key={r.key} className="grid grid-cols-[130px_minmax(0,1fr)] sm:grid-cols-[160px_minmax(0,1fr)] items-center gap-3">
+          <div className="text-[12.5px] text-ink-600 font-medium truncate">{r.label}</div>
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className="h-5 rounded-r-[4px] bg-brand-500 transition-[width] duration-500"
+              style={{ width: `${Math.max(1, (r.value / max) * 82)}%` }}
+              title={`${r.label}: ${fmt0(r.value)} m²`}
+            />
+            <span className="text-[12.5px] font-semibold text-ink-900 whitespace-nowrap tabular-nums">
+              {r.value > 0 ? `${fmt0(r.value)} m²` : "—"}
+            </span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -297,17 +343,17 @@ function DerivRow({
 }: { label: string; formula: string; m2: number; note?: string; total?: boolean }) {
   return (
     <div
-      className={`grid grid-cols-[190px_minmax(0,1fr)_110px_110px] gap-2 px-3 py-1.5 items-baseline border-t first:border-t-0 ${
-        total ? "bg-brand-50 border-brand-200 font-medium text-brand-800" : "border-ink-100"
+      className={`grid grid-cols-[190px_minmax(0,1fr)_110px_110px] gap-2 px-3 py-2 items-baseline border-t first:border-t-0 ${
+        total ? "bg-brand-50/70 border-brand-200 font-semibold text-brand-800" : "border-ink-100"
       }`}
     >
-      <div className={`text-[12px] ${total ? "" : "text-ink-900"}`}>{label}</div>
-      <div className="text-[11px] text-ink-500 leading-snug">
+      <div className={`text-[13px] ${total ? "" : "text-ink-900 font-medium"}`}>{label}</div>
+      <div className="text-[12px] text-ink-500 leading-snug">
         {formula}
         {note && <span className="block text-ink-400">{note}</span>}
       </div>
-      <div className="text-right text-[12px] tabular-nums">{m2 > 0 ? `${fmt0(m2)} m²` : "—"}</div>
-      <div className="text-right text-[11px] tabular-nums text-ink-500">
+      <div className="text-right text-[13px] tabular-nums">{m2 > 0 ? `${fmt0(m2)} m²` : "—"}</div>
+      <div className="text-right text-[12px] tabular-nums text-ink-500">
         {m2 > 0 ? `${fmt0(m2 * M2_TO_SQFT)} sqft` : "—"}
       </div>
     </div>
@@ -317,12 +363,5 @@ function DerivRow({
 function Stat({
   label, value, sub, good, bad,
 }: { label: string; value: string; sub?: string; good?: boolean; bad?: boolean }) {
-  const color = bad ? "text-red-700" : good ? "text-emerald-700" : "text-ink-900";
-  return (
-    <div className="border border-ink-200 bg-white p-3">
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className={`text-[18px] font-light tabular-nums mt-0.5 ${color}`}>{value}</div>
-      {sub && <div className="text-[11px] text-ink-500 mt-0.5 leading-snug">{sub}</div>}
-    </div>
-  );
+  return <StatTile label={label} value={value} sub={sub} tone={bad ? "bad" : good ? "ok" : null} />;
 }

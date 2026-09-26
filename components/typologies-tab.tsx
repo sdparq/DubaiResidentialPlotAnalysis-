@@ -296,8 +296,8 @@ export default function TypologiesTab() {
     <div className="grid gap-6">
       {detectedClass && apartmentsGFA <= 0 && (
         <div className="card bg-amber-50 border-amber-200">
-          <div className="eyebrow text-amber-800 text-[10px]">No Residential GFA set</div>
-          <p className="text-[12.5px] text-ink-800 mt-1 leading-snug">
+          <div className="text-[14px] font-semibold text-amber-900">No residential GFA set</div>
+          <p className="text-[13px] text-ink-800 mt-1 leading-snug">
             Typologies can be created here, but the <strong>Apartments matrix will stay empty</strong>:
             the auto-fill needs a m² target to distribute units against. Set <strong>Target GFA</strong>{" "}
             and the <strong>Residential</strong> row in Setup → GFA breakdown first — then apply the
@@ -308,32 +308,35 @@ export default function TypologiesTab() {
 
       {!detectedClass && (
         <div className="card bg-amber-50 border-amber-200">
-          <div className="eyebrow text-amber-800 text-[10px]">No class detected for this zone</div>
-          <p className="text-[12.5px] text-ink-800 mt-1 leading-snug">
+          <div className="text-[14px] font-semibold text-amber-900">No market class detected for this zone</div>
+          <p className="text-[13px] text-ink-800 mt-1 leading-snug">
             Current zone: <strong>{project.zone ? `"${project.zone}"` : "(empty)"}</strong>. It doesn&apos;t match
             any location in the Class Library, so there is no suggested mix and no{" "}
             <strong>Apply class mix</strong> button here. Either:
           </p>
-          <ul className="text-[12.5px] text-ink-800 mt-1.5 leading-snug list-disc pl-5 space-y-0.5">
-            <li>Pick a listed zone in <strong>Setup</strong> (tab 01, &quot;Zone (Dubai / Abu Dhabi)&quot;), or</li>
-            <li>Ask an admin to add this exact zone name to a class in the <strong>Class Library</strong> (🔒 icon at the right of the tab bar).</li>
+          <ul className="text-[13px] text-ink-800 mt-1.5 leading-snug list-disc pl-5 space-y-0.5">
+            <li>Pick a listed zone in <strong>Setup</strong> (step 02, &quot;Zone (Dubai / Abu Dhabi)&quot;), or</li>
+            <li>Ask an admin to add this exact zone name to a class in the <strong>Class library</strong> (padlock at the bottom of the sidebar).</li>
           </ul>
-          <p className="text-[11px] text-ink-600 mt-2 leading-snug">
+          <p className="text-[12px] text-ink-600 mt-2 leading-snug">
             You can still add typologies manually below without a detected class.
           </p>
         </div>
       )}
 
       {detectedClass && (
-        <div className="card bg-brand-50 border-brand-200">
-          <div className="flex items-start gap-4 flex-wrap">
-            <div className="text-[36px] font-light text-brand-700 tabular-nums leading-none">{detectedClass}</div>
+        <div className="card bg-gradient-to-br from-brand-50 to-white border-brand-200">
+          <div className="flex items-start gap-5 flex-wrap">
+            <div className="w-14 h-14 rounded-2xl bg-white ring-1 ring-brand-200 shadow-card flex flex-col items-center justify-center shrink-0">
+              <span className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-brand-600 leading-none">Class</span>
+              <span className="text-[24px] font-semibold text-brand-700 leading-none mt-0.5">{detectedClass}</span>
+            </div>
             <div className="flex-1 min-w-[260px]">
-              <div className="eyebrow text-brand-800 text-[10px]">Suggested mix for this zone</div>
-              <div className="text-[14px] font-medium text-ink-900 mt-0.5">{library[detectedClass].name}</div>
-              <table className="w-full mt-3 text-[12px] tabular-nums">
+              <div className="text-[12px] font-medium text-brand-700">Suggested mix for this zone</div>
+              <div className="text-[16px] font-semibold text-ink-900 tracking-tight mt-0.5">{library[detectedClass].name}</div>
+              <table className="w-full mt-3 text-[12.5px] tabular-nums">
                 <thead>
-                  <tr className="text-[10.5px] uppercase tracking-[0.08em] text-ink-500">
+                  <tr className="text-[10.5px] uppercase tracking-[0.05em] text-ink-500">
                     <th className="text-left py-1 font-medium">Typology</th>
                     <th className="text-right py-1 font-medium">% of units</th>
                     <th className="text-right py-1 font-medium">Min area (min–max)</th>
@@ -358,12 +361,12 @@ export default function TypologiesTab() {
                 </tbody>
               </table>
             </div>
-            <div className="grid gap-2 min-w-[180px]">
+            <div className="grid gap-2 content-start w-full sm:w-[230px]">
               <button
                 className="btn btn-primary"
                 onClick={() => applyClassMix(detectedClass)}
               >Apply class {detectedClass} mix</button>
-              <p className="text-[10.5px] text-ink-500 leading-snug">
+              <p className="text-[11.5px] text-ink-500 leading-snug">
                 Creates one typology per non-zero category using the class&apos;s
                 <strong> minimum</strong> sellable area. Below, edit <em>Total area</em>
                 and the balcony is auto-deducted at{" "}
@@ -476,7 +479,7 @@ export default function TypologiesTab() {
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10.5px] text-ink-400 pointer-events-none">%</span>
                       </div>
-                      <div className="text-[10px] text-ink-500 text-right mt-0.5 tabular-nums">
+                      <div className="text-[11px] text-ink-500 text-right mt-0.5 tabular-nums">
                         = {t.balconyArea.toFixed(1)} m²
                       </div>
                     </td>
@@ -566,7 +569,7 @@ function UnitMixCard({
     <div className="card">
       <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
-          <h2 className="section-title">Unit mix · this project</h2>
+          <h2 className="section-title">Unit mix of this project</h2>
           <p className="section-sub">
             One row per typology — each carries its own {`% of total units`}, so two typologies of
             the same category (a premium and a standard Studio, say) can hold different shares.
@@ -578,14 +581,14 @@ function UnitMixCard({
         <div className="flex items-center gap-2">
           {hasAnyOverride && (
             <button
-              className="text-[11px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+              className="btn btn-secondary btn-xs"
               onClick={onResetAll}
               title="Clear every override and fall back to class defaults"
             >Reset to class {detectedClass}</button>
           )}
           {offNorm && (
             <button
-              className="text-[11px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900 underline"
+              className="btn btn-secondary btn-xs"
               onClick={onNormalize}
               title="Scale every category proportionally so the sum equals 100%"
             >Normalize to 100%</button>
@@ -593,8 +596,8 @@ function UnitMixCard({
         </div>
       </div>
 
-      <div className="border border-ink-200">
-        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+      <div className="panel" style={{ minWidth: 420 }}>
+        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
           <div>Typology</div>
           <div className="text-right">Class {detectedClass} default</div>
           <div className="text-right">This project %</div>
@@ -608,11 +611,11 @@ function UnitMixCard({
         {rows.map((r) => (
           <div
             key={r.t.id}
-            className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0"
+            className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-2 items-center text-[13px] tabular-nums border-b border-ink-100 last:border-b-0"
           >
             <div>
-              <div className="text-ink-900">{r.t.name}</div>
-              <div className="text-[10px] uppercase tracking-[0.08em] text-ink-400">{r.t.category}</div>
+              <div className="text-ink-900 font-medium">{r.t.name}</div>
+              <div className="text-[11px] text-ink-400">{r.t.category}</div>
             </div>
             <div className="text-right text-ink-500">{r.classPct.toFixed(1)}%</div>
             <div className="text-right">
@@ -633,17 +636,17 @@ function UnitMixCard({
               {r.isOverride ? (
                 <button
                   onClick={() => onResetTypology(r.t.id)}
-                  className="text-[10px] uppercase tracking-[0.10em] text-ink-500 hover:text-brand-700"
+                  className="text-[11.5px] font-medium text-ink-500 hover:text-brand-700"
                   title="Revert this typology to its class-derived share"
                 >Reset</button>
               ) : (
-                <span className="text-[10px] text-ink-300">default</span>
+                <span className="text-[11px] text-ink-300">default</span>
               )}
             </div>
           </div>
         ))}
-        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-1.5 items-center text-[11.5px] tabular-nums bg-bone-50/40 border-t border-ink-200">
-          <div className="uppercase tracking-[0.08em] text-[10.5px] text-ink-500">Sum</div>
+        <div className="grid grid-cols-[1fr_110px_110px_70px] gap-1 px-3 py-2 items-center text-[13px] tabular-nums bg-brand-50/60 border-t border-ink-200/80 font-semibold">
+          <div className="text-ink-700">Sum</div>
           <div className="text-right text-ink-500"></div>
           <div className={`text-right ${offNorm ? "text-amber-700 font-medium" : "text-ink-700"}`}>
             {effSum.toFixed(1)}%
@@ -653,14 +656,14 @@ function UnitMixCard({
       </div>
 
       {missingCats.length > 0 && (
-        <p className="text-[11px] text-amber-700 mt-2 leading-snug">
+        <p className="text-[12px] text-amber-800 mt-3 leading-snug">
           Class {detectedClass} assigns a share to {missingCats.join(", ")} but the project has no
           typology of {missingCats.length === 1 ? "that category" : "those categories"} — they
           contribute 0 units. Add one below if you want them in the mix.
         </p>
       )}
 
-      <p className="text-[11px] text-ink-500 mt-3 leading-snug">
+      <p className="text-[12px] text-ink-500 mt-3 leading-snug">
         The mix drives the Apartments auto-fill: total units N = Apartments GFA / average interior
         area weighted by these %s, then units<sub>typology</sub> = round(N × % / 100).
       </p>
@@ -690,7 +693,7 @@ function BalconyGfaCard({
 }) {
   const factor = value / 100;
   return (
-    <div className="card border-brand-200">
+    <div className="card">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-[260px] flex-1">
           <h2 className="section-title">Balconies in GFA</h2>
@@ -703,15 +706,14 @@ function BalconyGfaCard({
             balcony — they are physical.
           </p>
         </div>
-        <div className="flex border border-ink-200 overflow-hidden shrink-0 self-start">
+        <div className="seg shrink-0 self-start" role="radiogroup" aria-label="Share of balconies counted as GFA">
           {BALCONY_GFA_OPTIONS.map((o) => (
             <button
               key={o.pct}
-              className={`px-3 py-2 text-[11px] uppercase tracking-[0.08em] transition-colors ${
-                value === o.pct
-                  ? "bg-brand-700 text-white"
-                  : "bg-white text-ink-700 hover:bg-bone-100"
-              } ${o.pct !== 0 ? "border-l border-ink-200" : ""}`}
+              role="radio"
+              aria-checked={value === o.pct}
+              data-active={value === o.pct}
+              className="seg-btn !py-1.5"
               onClick={() => onChange(o.pct)}
               title={o.blurb}
             >{o.label}</button>
@@ -723,27 +725,29 @@ function BalconyGfaCard({
           const active = o.pct === value;
           const n = unitsUnder(o.pct);
           return (
-            <div
+            <button
+              type="button"
               key={o.pct}
-              className={`border p-3 text-[11.5px] leading-snug ${
-                active ? "border-brand-500 bg-brand-50 text-ink-900" : "border-ink-100 text-ink-500"
+              onClick={() => onChange(o.pct)}
+              className={`text-left rounded-lg p-3.5 text-[12.5px] leading-snug transition-colors ${
+                active ? "ring-2 ring-brand-500 bg-brand-50 text-ink-900" : "ring-1 ring-inset ring-ink-200/80 text-ink-500 hover:bg-bone-50"
               }`}
             >
               <div className="flex items-baseline justify-between gap-2">
-                <span className={`eyebrow text-[10px] ${active ? "text-brand-800" : "text-ink-500"}`}>{o.label}</span>
+                <span className={`text-[12.5px] font-semibold ${active ? "text-brand-800" : "text-ink-700"}`}>{o.label}</span>
                 {n > 0 && (
-                  <span className="tabular-nums text-[11px]">
+                  <span className="tabular-nums text-[12px] font-medium">
                     ≈ {n.toLocaleString("en-US")} units
                   </span>
                 )}
               </div>
               <div className="mt-1">{o.blurb}</div>
-            </div>
+            </button>
           );
         })}
       </div>
       {apartmentsGFA > 0 && (
-        <p className="text-[10.5px] text-ink-500 mt-2 leading-snug">
+        <p className="text-[12px] text-ink-500 mt-3 leading-snug">
           Unit counts are the exact Apartments auto-fill for each rule (current unit mix and
           typology areas) against the {Math.round(apartmentsGFA).toLocaleString("en-US")} m² Apartments
           GFA target. Current rule: each unit consumes interior + {Math.round(factor * 100)} % of its balcony.

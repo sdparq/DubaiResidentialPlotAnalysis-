@@ -252,6 +252,9 @@ export interface Project {
   economic?: EconomicConfig;
   /** Parametric facade treatment for the Massing viewer. */
   facade?: FacadeConfig;
+  /** Bearing of true north, clockwise from the drawing's +y axis (degrees).
+   *  Orients the sun & shadow study. Default 0 = the drawing is north-up. */
+  northDeg?: number;
 }
 
 /** Parameters for the modelled residential facade in the Massing viewer. */

@@ -1,6 +1,22 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Building,
+  Camera,
+  Compass as CompassIcon,
+  Footprints,
+  ImageDown,
+  Maximize2,
+  Pause,
+  Play,
+  Rotate3d,
+  Ruler,
+  Sparkles,
+  Sun,
+  TreePalm,
+  X,
+} from "lucide-react";
 import { useStore, useProject } from "@/lib/store";
 import { fmt2 } from "@/lib/format";
 import { renderSchemeWithGemini, DEFAULT_SCHEME_PROMPT, DEFAULT_HYPERREAL_PROMPT } from "@/lib/ai-render";
@@ -17,14 +33,21 @@ import {
 } from "@/lib/geom";
 import { edgeColor } from "@/lib/edge-colors";
 import type { Volume } from "@/lib/massing";
+import type { CaptureFn, FacadeParams, SceneStyle, ViewPresetKind } from "./massing-scene";
+import { dubaiDaylight, dubaiSun, formatClock } from "@/lib/sun";
+import { projectMetrics, type ProjectMetrics } from "@/lib/metrics";
+import { composeBrandedImage, downloadDataUrl, slug } from "@/lib/branded-image";
+import { BRAND } from "@/lib/brand";
+import { setMassingSnapshot } from "@/lib/snapshot";
+import { BrandMark } from "./shell/brand-mark";
 
 const MassingScene = dynamic(() => import("./massing-scene"), {
   ssr: false,
   loading: () => (
-    <div className="aspect-[4/3] border border-ink-200 bg-bone-100 flex items-center justify-center">
+    <div className="absolute inset-0 flex items-center justify-center bg-bone-100">
       <div className="text-center">
         <div className="mx-auto w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-3" />
-        <div className="text-xs text-ink-500 uppercase tracking-[0.18em]">Loading 3D viewer…</div>
+        <div className="text-[12px] text-ink-500">Loading 3D viewer…</div>
       </div>
     </div>
   ),
@@ -36,6 +59,14 @@ type AiStyle = "scheme" | "hyperreal";
 const PROMPT_FOR: Record<AiStyle, string> = {
   scheme: DEFAULT_SCHEME_PROMPT,
   hyperreal: DEFAULT_HYPERREAL_PROMPT,
+};
+
+/** Tier colours of the Diagram style — kept in sync with PALETTES.diagram in massing-scene. */
+const TIER_SWATCH: Record<NonNullable<Volume["kind"]>, string> = {
+  basement: "#9aa3b2",
+  ground: "#eb6834",
+  podium: "#2a78d6",
+  tower: "#1baf7a",
 };
 
 /** Resolve a per-edge setback array for a tier:
@@ -120,9 +151,6 @@ export default function MassingTab() {
     () => customPodiums ?? [tierPolygon(plotPoly, podiumEdges)],
     [customPodiums, plotPoly, podiumEdges],
   );
-  /** First block of each tier — anchor for amenity clearances and legacy props. */
-  const groundPoly = groundPolys[0] ?? [];
-  const podiumPoly = podiumPolys[0] ?? [];
   const towerPolysCentered = useMemo(
     () => customTowers ?? [tierPolygon(plotPoly, towerEdges)],
     [customTowers, plotPoly, towerEdges],
@@ -211,27 +239,28 @@ export default function MassingTab() {
   const totalVolumeGFA = groundArea * groundCount + podiumArea * podiumCount + towerArea * towerCount;
   const computedFar = plotPolyArea > 0 ? totalVolumeGFA / plotPolyArea : 0;
 
-  const [viewPreset, setViewPreset] = useState<{ kind: "iso" | "front" | "top"; nonce: number } | null>(null);
-  const [autoRotate, setAutoRotate] = useState(false);
-  const [showAnnotations, setShowAnnotations] = useState(true);
-  const captureRef = useRef<(() => string) | null>(null);
+  const captureRef = useRef<CaptureFn | null>(null);
 
-  // Facade parameters, persisted per project with sensible defaults.
-  const facadeParams = {
-    mode: project.facade?.mode ?? "massing",
-    panelWidthM: project.facade?.panelWidthM ?? 3.2,
-    balconyDepthM: project.facade?.balconyDepthM ?? 1.8,
-    balconyEveryNBays: project.facade?.balconyEveryNBays ?? 2,
-    solidPanelRatio: project.facade?.solidPanelRatio ?? 0.25,
-    balconyLayout: project.facade?.balconyLayout ?? "rhythm",
-    patternSeed: project.facade?.patternSeed ?? 1,
-    groundPodiumTreatment: project.facade?.groundPodiumTreatment ?? "massing",
-    finSpacingM: project.facade?.finSpacingM ?? 1.0,
-    finWidthM: project.facade?.finWidthM ?? 0.15,
-    finDepthM: project.facade?.finDepthM ?? 0.35,
-    podiumPool: project.facade?.podiumPool ?? false,
-    podiumLoungeBbq: project.facade?.podiumLoungeBbq ?? false,
-  } as const;
+  // Facade parameters, persisted per project with sensible defaults. Memoised
+  // so the 3D scene only rebuilds the building when they actually change.
+  const facadeParams: FacadeParams = useMemo(
+    () => ({
+      mode: project.facade?.mode ?? "massing",
+      panelWidthM: project.facade?.panelWidthM ?? 3.2,
+      balconyDepthM: project.facade?.balconyDepthM ?? 1.8,
+      balconyEveryNBays: project.facade?.balconyEveryNBays ?? 2,
+      solidPanelRatio: project.facade?.solidPanelRatio ?? 0.25,
+      balconyLayout: project.facade?.balconyLayout ?? "rhythm",
+      patternSeed: project.facade?.patternSeed ?? 1,
+      groundPodiumTreatment: project.facade?.groundPodiumTreatment ?? "massing",
+      finSpacingM: project.facade?.finSpacingM ?? 1.0,
+      finWidthM: project.facade?.finWidthM ?? 0.15,
+      finDepthM: project.facade?.finDepthM ?? 0.35,
+      podiumPool: project.facade?.podiumPool ?? false,
+      podiumLoungeBbq: project.facade?.podiumLoungeBbq ?? false,
+    }),
+    [project.facade],
+  );
 
   function patchFacade(partial: Partial<NonNullable<typeof project.facade>>) {
     patch({ facade: { ...project.facade, ...partial } });
@@ -239,27 +268,22 @@ export default function MassingTab() {
 
   const [amenityFit, setAmenityFit] = useState({ pool: true, lounge: true });
   const [immersive, setImmersive] = useState(false);
+  const openWalk = useCallback(() => setImmersive(true), []);
+  const [panel, setPanel] = useState<"scheme" | "site" | "facade" | "ai">("scheme");
 
-  function requestPreset(kind: "iso" | "front" | "top") {
-    setAutoRotate(false);
-    setViewPreset((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
-  }
-
-  function downloadSnapshot() {
-    const data = captureRef.current?.();
-    if (!data) return;
-    const a = document.createElement("a");
-    a.href = data;
-    a.download = `${project.name.replace(/\s+/g, "-").toLowerCase() || "project"}-massing.png`;
-    a.click();
-  }
+  const metrics = useMemo(() => projectMetrics(project), [project]);
+  const northDeg = project.northDeg ?? 0;
 
   // ---- AI render (Gemini image-to-image over the studio capture) ----
   const [apiKey, setApiKey] = useState<string>("");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const saved = window.localStorage.getItem("plot-analysis.gemini.apiKey");
-    if (saved) setApiKey(saved);
+    try {
+      const saved = window.localStorage.getItem("plot-analysis.gemini.apiKey");
+      if (saved) setApiKey(saved);
+    } catch {
+      /* storage blocked — the key just isn't remembered */
+    }
   }, []);
   const [keyDialog, setKeyDialog] = useState<{ open: boolean; draft: string }>({ open: false, draft: "" });
   const persistKey = useCallback((k: string) => {
@@ -309,7 +333,7 @@ export default function MassingTab() {
       setKeyDialog({ open: true, draft: "" });
       return;
     }
-    const png = captureRef.current?.();
+    const png = await captureRef.current?.();
     if (!png) { setAiError("Could not capture the 3D viewer."); return; }
     const basePrompt = (aiPrompts[aiStyle] ?? PROMPT_FOR[aiStyle]).trim() || PROMPT_FOR[aiStyle];
     const prompt = `${geometryFacts}\n\n${basePrompt}`;
@@ -366,333 +390,287 @@ export default function MassingTab() {
     patch({ plotPolygon: next });
   }
 
+  const tiersPresent = useMemo(() => {
+    const kinds = new Set(sceneVolumes.map((v) => v.kind ?? "tower"));
+    return (["tower", "podium", "ground", "basement"] as const).filter((k) => kinds.has(k));
+  }, [sceneVolumes]);
+
+  const PANELS = [
+    { id: "scheme", label: "Scheme" },
+    { id: "site", label: "Site" },
+    { id: "facade", label: "Façade" },
+    { id: "ai", label: "AI render" },
+  ] as const;
+
   return (
     <div className="grid gap-6">
-      <div className="card">
-        <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
-          <div>
-            <h2 className="section-title">Massing study · 3D</h2>
-            <p className="section-sub">
-              Simple stratification: the <strong>basement</strong> fills the full plot line;{" "}
-              <strong>ground</strong>, <strong>podium</strong> and <strong>tower</strong> are built
-              on the plot footprint with their own per-edge setbacks. Floor heights come from
-              Setup&apos;s floor breakdown.
-            </p>
-          </div>
-          <div className="inline-flex border border-ink-200 bg-bone-50">
-            <button
-              onClick={() => setPlotMode("rectangular")}
-              className={`px-4 py-2 text-[11px] font-medium uppercase tracking-[0.10em] transition-colors ${
-                mode === "rectangular" ? "bg-brand-500 text-white" : "text-ink-700 hover:bg-bone-200"
-              }`}
-            >Rectangular</button>
-            <button
-              onClick={() => setPlotMode("polygon")}
-              className={`px-4 py-2 text-[11px] font-medium uppercase tracking-[0.10em] transition-colors ${
-                mode === "polygon" ? "bg-brand-500 text-white" : "text-ink-700 hover:bg-bone-200"
-              }`}
-            >Polygon (irregular)</button>
-          </div>
-        </div>
+      <div className="grid xl:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
+        <MassingViewer
+          projectId={project.id}
+          projectName={project.name}
+          zone={project.zone}
+          plot={plotPoly}
+          buildable={towerPoly}
+          volumes={sceneVolumes}
+          floorHeight={towerHeightM > 0 ? towerHeightM : project.floorHeight}
+          showFrontMarker={mode === "rectangular"}
+          edgeColors={edgeColors}
+          volumeLabels={volumeLabels}
+          facade={facadeParams}
+          onAmenityFit={setAmenityFit}
+          captureRef={captureRef}
+          northDeg={northDeg}
+          metrics={metrics}
+          tiersPresent={tiersPresent}
+          onImmersive={openWalk}
+        />
 
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-6">
-          <div className="grid gap-4 content-start">
-            <div className="relative aspect-[4/3] lg:aspect-auto lg:h-[calc(100vh-260px)] lg:min-h-[380px] lg:max-h-[640px] border border-ink-200 bg-bone-100 overflow-hidden">
-              <MassingScene
-                plot={plotPoly}
-                buildable={towerPoly}
-                volumes={sceneVolumes}
-                primaryFootprint={towerPoly}
-                floorHeight={towerHeightM > 0 ? towerHeightM : project.floorHeight}
-                showFrontMarker={mode === "rectangular"}
-                edgeColors={edgeColors}
-                volumeLabels={volumeLabels}
-                showAnnotations={showAnnotations}
-                viewPreset={viewPreset}
-                autoRotate={autoRotate}
-                captureRef={captureRef}
-                facade={facadeParams}
-                onAmenityFit={setAmenityFit}
-              />
-              <div className="absolute bottom-2 left-2 flex items-stretch gap-1.5 flex-wrap">
-                <div className="inline-flex border border-ink-200 bg-white/90 backdrop-blur-sm shadow-sm">
-                  {([["iso", "Iso"], ["front", "Front"], ["top", "Top"]] as const).map(([kind, label]) => (
-                    <button
-                      key={kind}
-                      onClick={() => requestPreset(kind)}
-                      className="px-3 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.10em] text-ink-700 hover:bg-bone-50 transition-colors"
-                      title={`${label} view`}
-                    >{label}</button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setAutoRotate((v) => !v)}
-                  className={`px-3 py-1.5 border border-ink-200 text-[10.5px] font-medium uppercase tracking-[0.10em] shadow-sm transition-colors ${
-                    autoRotate ? "bg-ink-900 text-bone-100" : "bg-white/90 backdrop-blur-sm text-ink-700 hover:bg-bone-50"
-                  }`}
-                  title="Slow turntable rotation"
-                >⟳ Orbit</button>
-                <button
-                  onClick={() => setShowAnnotations((v) => !v)}
-                  className={`px-3 py-1.5 border border-ink-200 text-[10.5px] font-medium uppercase tracking-[0.10em] shadow-sm transition-colors ${
-                    showAnnotations ? "bg-ink-900 text-bone-100" : "bg-white/90 backdrop-blur-sm text-ink-700 hover:bg-bone-50"
-                  }`}
-                  title="Toggle height dimension and tier labels"
-                >Dims</button>
-                <button
-                  onClick={downloadSnapshot}
-                  className="px-3 py-1.5 border border-ink-200 bg-white/90 backdrop-blur-sm text-[10.5px] font-medium uppercase tracking-[0.10em] text-ink-700 hover:bg-bone-50 shadow-sm transition-colors"
-                  title="Download the current view as a PNG image"
-                >↓ PNG</button>
-                <button
-                  onClick={() => setImmersive(true)}
-                  className="px-3 py-1.5 border border-brand-600 bg-brand-500 text-white text-[10.5px] font-semibold uppercase tracking-[0.10em] hover:bg-brand-600 shadow-sm transition-colors"
-                  title="Walk around the building in first person — WASD + mouse"
-                >🎮 Immersive</button>
-              </div>
+        <aside className="card !p-0 overflow-hidden xl:sticky xl:top-[150px]">
+          <div className="px-4 pt-4 pb-3 border-b border-ink-100">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="section-title">Design controls</h2>
+              <span className="text-[12px] text-ink-500 tabular-nums">{metrics.heightCode} · {totalH.toFixed(1)} m</span>
             </div>
-
-            {project.parcel && !!project.parcel.imageDataUrl && (
-              <div className="border border-ink-200 bg-bone-50 overflow-hidden">
-                <div className="px-3 py-2 border-b border-ink-200 bg-white flex items-center justify-between gap-3 flex-wrap">
-                  <span className="eyebrow text-ink-500">Reference plan</span>
-                  {project.parcel.calibration && (
-                    <span className="tag-ok">Calibrated · {project.parcel.calibration.metres.toFixed(2)} m ref</span>
-                  )}
-                </div>
-                <PlanTrace
-                  parcel={project.parcel}
-                  mode="idle"
-                  tracePolygonPx={project.parcel.tracePolygonPx}
-                  calibration={project.parcel.calibration}
-                  edgeColors={
-                    mode === "polygon" && project.parcel.tracePolygonPx
-                      ? project.parcel.tracePolygonPx.map((_, i) => edgeColor(i))
-                      : undefined
-                  }
-                  extraPolygons={([
-                    ["ground", "#8a9a76", "Ground"],
-                    ["podium", "#a17e4c", "Podium"],
-                    ["tower", "#3f5135", "Tower"],
-                  ] as const).flatMap(([key, color, label]) => {
-                    const t = project.parcel!.tierTracesPx;
-                    const plural = key === "ground" ? t?.grounds : key === "podium" ? t?.podiums : t?.towers;
-                    const single = t?.[key];
-                    const list = plural ?? (single ? [single] : []);
-                    return list
-                      .filter((pts) => pts.length >= 3)
-                      .map((pts, i, arr) => ({
-                        points: pts,
-                        color,
-                        label: arr.length > 1 ? `${label} ${i + 1}` : label,
-                      }));
-                  })}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-4 content-start">
-            <TierSummary
-              groundCount={groundCount}
-              groundHeightM={groundHeightM}
-              podiumCount={podiumCount}
-              podiumHeightM={podiumHeightM}
-              towerCount={towerCount}
-              towerHeightM={towerHeightM}
-              basementCount={basementCount}
-              basementHeightM={basementHeightM}
-              groundArea={groundArea}
-              podiumArea={podiumArea}
-              towerArea={towerArea}
-              plotArea={plotPolyArea}
-            />
-
-            {(customGrounds || customPodiums || customTowers) && (
-              <div className="border border-brand-200 bg-brand-50 p-3 text-[11.5px] text-ink-800 leading-snug">
-                <div className="eyebrow text-brand-800 text-[10px] mb-1">Custom footprints from Plot</div>
-                {([
-                  ["Ground", customGrounds, "ground"],
-                  ["Podium", customPodiums, "podium"],
-                  ["Tower", customTowers, "tower"],
-                ] as const).map(([label, blocks, tier]) =>
-                  blocks ? (
-                    <div key={tier} className="flex items-center justify-between gap-2 py-0.5">
-                      <span>
-                        <strong>
-                          {blocks.length === 1 ? label : `${blocks.length} ${label.toLowerCase()} blocks`}
-                        </strong>{" "}
-                        use{blocks.length === 1 ? "s" : ""} traced footprint{blocks.length === 1 ? "" : "s"}{" "}
-                        ({blocks.map((poly) => fmt2(polygonArea(poly))).join(" + ")} m²) — the{" "}
-                        {label.toLowerCase()} setbacks below are ignored. Add or remove blocks in the
-                        Plot tab.
-                      </span>
-                      <button
-                        className="text-[10px] uppercase tracking-[0.10em] text-ink-500 hover:text-red-700 underline shrink-0"
-                        onClick={() => {
-                          const singular = { ground: "groundPolygon", podium: "podiumPolygon", tower: "towerPolygon" } as const;
-                          const plural = { ground: "groundPolygons", podium: "podiumPolygons", tower: "towerPolygons" } as const;
-                          const traceKey = { ground: "grounds", podium: "podiums", tower: "towers" } as const;
-                          patch({
-                            [singular[tier]]: undefined,
-                            [plural[tier]]: undefined,
-                            parcel: project.parcel
-                              ? {
-                                  ...project.parcel,
-                                  tierTracesPx: {
-                                    ...project.parcel.tierTracesPx,
-                                    [tier]: undefined,
-                                    [traceKey[tier]]: undefined,
-                                  },
-                                }
-                              : project.parcel,
-                          });
-                        }}
-                        title={`Remove every traced ${label.toLowerCase()} block and fall back to setbacks`}
-                      >clear</button>
-                    </div>
-                  ) : null,
-                )}
-              </div>
-            )}
-
-            <SetbacksTable
-              plotPoly={plotPoly}
-              groundEdges={groundEdges}
-              podiumEdges={podiumEdges}
-              towerEdges={towerEdges}
-              groundUni={groundUni}
-              podiumUni={podiumUni}
-              towerUni={towerUni}
-              onPatch={patch}
-            />
-
-            <FacadePanel params={facadeParams} onPatch={patchFacade} />
-
-            <PodiumAmenitiesPanel
-              hasDeck={podiumH > 0 || groundH > 0}
-              deckKind={podiumH > 0 ? "podium" : "ground"}
-              pool={facadeParams.podiumPool}
-              lounge={facadeParams.podiumLoungeBbq}
-              fit={amenityFit}
-              onPatch={patchFacade}
-            />
-
-            <TowerOffset
-              dx={towerDx}
-              dy={towerDy}
-              onPatch={patch}
-            />
-
-            <div className="border border-ink-200">
-              <div className="grid grid-cols-2 divide-x divide-ink-200 border-b border-ink-200">
-                <HeroStat label="Height above ground" value={fmt2(totalH)} unit="m" />
-                <HeroStat label="FAR (volume)" value={computedFar.toFixed(2)} />
-              </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm p-3 bg-bone-50/40">
-                <Stat label="Plot area" value={`${fmt2(plotPolyArea)} m²`} />
-                <Stat label="Tower footprint" value={`${fmt2(towerArea)} m²`} />
-                <Stat label="Basement depth" value={`${fmt2(basementH)} m`} />
-                <Stat label="Σ Volume GFA" value={`${fmt2(totalVolumeGFA)} m²`} />
-              </div>
-            </div>
-
-            <div className="border border-ink-200">
-              <div className="px-3 py-2 bg-bone-50 border-b border-ink-200 flex items-center justify-between gap-2">
-                <span className="eyebrow text-ink-500 text-[10px]">AI render</span>
-                <div className="inline-flex border border-ink-200 bg-white">
-                  {([["scheme", "Schematic"], ["hyperreal", "Hyperreal"]] as const).map(([id, label]) => (
-                    <button
-                      key={id}
-                      onClick={() => setAiStyle(id)}
-                      className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-                        aiStyle === id ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-                      }`}
-                    >{label}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="p-3 grid gap-2">
+            <div className="seg mt-3 w-full grid grid-cols-4" role="tablist" aria-label="Design control groups">
+              {PANELS.map((p) => (
                 <button
-                  className="px-2.5 py-2 text-[10.5px] font-medium uppercase tracking-[0.10em] bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-wait transition-colors"
-                  onClick={handleAiRender}
-                  disabled={aiRendering}
-                  title="Capture the current 3D view and re-render it via Google Gemini"
+                  key={p.id}
+                  role="tab"
+                  aria-selected={panel === p.id}
+                  data-active={panel === p.id}
+                  className="seg-btn !px-1"
+                  onClick={() => setPanel(p.id)}
                 >
-                  {aiRendering ? "Rendering…" : "✦ Render current view"}
+                  {p.label}
                 </button>
-                <details>
-                  <summary className="cursor-pointer text-[10.5px] uppercase tracking-[0.10em] text-ink-500 hover:text-ink-900">Prompt</summary>
+              ))}
+            </div>
+          </div>
+          <div className="p-4 grid gap-4 xl:max-h-[calc(100vh-290px)] xl:overflow-y-auto scroll-thin">
+            {panel === "scheme" && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <HeroStat label="Height above ground" value={fmt2(totalH)} unit="m" />
+                  <HeroStat
+                    label="Gross plates ÷ plot"
+                    value={computedFar.toFixed(2)}
+                    title="Every modelled floor plate (incl. parking and services levels) over the plot area — the GFA-based FAR is in the KPI bar"
+                  />
+                </div>
+                <TierSummary
+                  groundCount={groundCount}
+                  groundHeightM={groundHeightM}
+                  podiumCount={podiumCount}
+                  podiumHeightM={podiumHeightM}
+                  towerCount={towerCount}
+                  towerHeightM={towerHeightM}
+                  basementCount={basementCount}
+                  basementHeightM={basementHeightM}
+                  groundArea={groundArea}
+                  podiumArea={podiumArea}
+                  towerArea={towerArea}
+                  plotArea={plotPolyArea}
+                />
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                  <Stat label="Plot area" value={`${fmt2(plotPolyArea)} m²`} />
+                  <Stat label="Tower footprint" value={`${fmt2(towerArea)} m²`} />
+                  <Stat label="Basement depth" value={`${fmt2(basementH)} m`} />
+                  <Stat label="Σ Volume GFA" value={`${fmt2(totalVolumeGFA)} m²`} />
+                </div>
+                {(customGrounds || customPodiums || customTowers) && (
+                  <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-[12px] text-ink-800 leading-snug">
+                    <div className="text-[12px] font-semibold text-brand-800 mb-1">Custom footprints from Plot</div>
+                    {([
+                      ["Ground", customGrounds, "ground"],
+                      ["Podium", customPodiums, "podium"],
+                      ["Tower", customTowers, "tower"],
+                    ] as const).map(([label, blocks, tier]) =>
+                      blocks ? (
+                        <div key={tier} className="flex items-center justify-between gap-2 py-0.5">
+                          <span>
+                            <strong>
+                              {blocks.length === 1 ? label : `${blocks.length} ${label.toLowerCase()} blocks`}
+                            </strong>{" "}
+                            use{blocks.length === 1 ? "s" : ""} traced footprint{blocks.length === 1 ? "" : "s"}{" "}
+                            ({blocks.map((poly) => fmt2(polygonArea(poly))).join(" + ")} m²) — the{" "}
+                            {label.toLowerCase()} setbacks are ignored. Add or remove blocks in the Plot step.
+                          </span>
+                          <button
+                            className="text-[11px] text-ink-500 hover:text-red-700 underline shrink-0"
+                            onClick={() => {
+                              const singular = { ground: "groundPolygon", podium: "podiumPolygon", tower: "towerPolygon" } as const;
+                              const plural = { ground: "groundPolygons", podium: "podiumPolygons", tower: "towerPolygons" } as const;
+                              const traceKey = { ground: "grounds", podium: "podiums", tower: "towers" } as const;
+                              patch({
+                                [singular[tier]]: undefined,
+                                [plural[tier]]: undefined,
+                                parcel: project.parcel
+                                  ? {
+                                      ...project.parcel,
+                                      tierTracesPx: {
+                                        ...project.parcel.tierTracesPx,
+                                        [tier]: undefined,
+                                        [traceKey[tier]]: undefined,
+                                      },
+                                    }
+                                  : project.parcel,
+                              });
+                            }}
+                            title={`Remove every traced ${label.toLowerCase()} block and fall back to setbacks`}
+                          >clear</button>
+                        </div>
+                      ) : null,
+                    )}
+                  </div>
+                )}
+                <TowerOffset dx={towerDx} dy={towerDy} onPatch={patch} />
+              </>
+            )}
+
+            {panel === "site" && (
+              <>
+                <div className="grid gap-2">
+                  <span className="text-[12px] font-medium text-ink-600">Plot geometry</span>
+                  <div className="seg w-full grid grid-cols-2">
+                    <button className="seg-btn" data-active={mode === "rectangular"} onClick={() => setPlotMode("rectangular")}>
+                      Rectangular
+                    </button>
+                    <button className="seg-btn" data-active={mode === "polygon"} onClick={() => setPlotMode("polygon")}>
+                      Polygon (irregular)
+                    </button>
+                  </div>
+                </div>
+                <Collapsible
+                  title={mode === "polygon" ? "Plot vertices" : "Plot dimensions"}
+                  defaultOpen={mode === "rectangular" || (project.plotPolygon?.length ?? 0) === 0}
+                >
+                  {mode === "rectangular" ? (
+                    <RectangularInputs project={project} patch={patch} placeholder={sqRoot.toFixed(1)} />
+                  ) : (
+                    <PolygonInputs
+                      vertices={project.plotPolygon ?? []}
+                      onUpdate={updateVertex}
+                      onAddAfter={addVertexAfter}
+                      onDelete={deleteVertex}
+                      onRecentre={recentrePolygon}
+                    />
+                  )}
+                </Collapsible>
+                <SetbacksTable
+                  plotPoly={plotPoly}
+                  groundEdges={groundEdges}
+                  podiumEdges={podiumEdges}
+                  towerEdges={towerEdges}
+                  groundUni={groundUni}
+                  podiumUni={podiumUni}
+                  towerUni={towerUni}
+                  onPatch={patch}
+                />
+                <NorthControl value={northDeg} onChange={(v) => patch({ northDeg: v })} />
+              </>
+            )}
+
+            {panel === "facade" && (
+              <>
+                <FacadePanel params={facadeParams} onPatch={patchFacade} />
+                <PodiumAmenitiesPanel
+                  hasDeck={podiumH > 0 || groundH > 0}
+                  deckKind={podiumH > 0 ? "podium" : "ground"}
+                  pool={facadeParams.podiumPool}
+                  lounge={facadeParams.podiumLoungeBbq}
+                  fit={amenityFit}
+                  onPatch={patchFacade}
+                />
+              </>
+            )}
+
+            {panel === "ai" && (
+              <div className="grid gap-3">
+                <p className="text-[12.5px] text-ink-500 leading-relaxed">
+                  Re-renders the current 3D view with Google Gemini — keep the camera where you want it, pick a
+                  style and render. Storey counts and proportions are sent with the prompt so the building keeps
+                  its geometry.
+                </p>
+                <div className="seg w-full grid grid-cols-2">
+                  {([["scheme", "Schematic"], ["hyperreal", "Hyperreal"]] as const).map(([id, label]) => (
+                    <button key={id} className="seg-btn" data-active={aiStyle === id} onClick={() => setAiStyle(id)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button className="btn btn-primary w-full" onClick={handleAiRender} disabled={aiRendering}>
+                  <Sparkles className="w-4 h-4" />
+                  {aiRendering ? "Rendering…" : "Render current view"}
+                </button>
+                <details className="rounded-lg border border-ink-200/80 px-3 py-2">
+                  <summary className="cursor-pointer text-[12px] font-medium text-ink-600 hover:text-ink-900">Prompt</summary>
                   <textarea
-                    className="cell-input !text-[10.5px] !leading-snug !py-1.5 !px-1.5 font-mono mt-1.5 w-full"
-                    rows={6}
+                    className="cell-input !text-[11px] !leading-snug !py-1.5 !px-2 font-mono mt-2 w-full"
+                    rows={7}
                     value={aiPrompts[aiStyle]}
                     onChange={(e) => setAiPrompts((p) => ({ ...p, [aiStyle]: e.target.value }))}
                     spellCheck={false}
                   />
                   {aiPrompts[aiStyle] !== PROMPT_FOR[aiStyle] && (
                     <button
-                      className="text-[10px] text-brand-700 hover:text-brand-900 underline mt-1"
+                      className="text-[11px] text-brand-700 hover:text-brand-900 underline mt-1"
                       onClick={() => setAiPrompts((p) => ({ ...p, [aiStyle]: PROMPT_FOR[aiStyle] }))}
                     >Reset to default</button>
                   )}
                 </details>
                 <button
-                  className="text-[10px] text-ink-500 hover:text-ink-900 underline justify-self-start"
+                  className="text-[12px] text-ink-500 hover:text-ink-900 underline justify-self-start"
                   onClick={() => setKeyDialog({ open: true, draft: apiKey })}
                 >
                   {apiKey ? "Replace Gemini key" : "Set Gemini key"}
                 </button>
                 {aiError && (
-                  <div className="text-[10px] text-red-700 leading-snug whitespace-pre-wrap">{aiError}</div>
+                  <div className="text-[11.5px] text-red-700 leading-snug whitespace-pre-wrap rounded-lg bg-red-50 ring-1 ring-red-200 p-2">{aiError}</div>
                 )}
               </div>
-            </div>
-
-            <Collapsible
-              title={mode === "polygon" ? "Plot geometry · vertices" : "Plot dimensions"}
-              defaultOpen={mode === "polygon" ? (project.plotPolygon?.length ?? 0) === 0 : false}
-            >
-              {mode === "rectangular" ? (
-                <RectangularInputs project={project} patch={patch} placeholder={sqRoot.toFixed(1)} />
-              ) : (
-                <PolygonInputs
-                  vertices={project.plotPolygon ?? []}
-                  onUpdate={updateVertex}
-                  onAddAfter={addVertexAfter}
-                  onDelete={deleteVertex}
-                  onRecentre={recentrePolygon}
-                />
-              )}
-            </Collapsible>
-
-            <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-[0.18em] text-ink-500 flex-wrap">
-              <span className="inline-block w-3 h-3 bg-[#ede9df] border border-[#3f5135]" />
-              Plot
-              <span className="inline-block w-3 h-3 bg-[#647d57] ml-3" />
-              Tower
-              {groundH > 0 && (
-                <>
-                  <span className="inline-block w-3 h-3 bg-[#8a9a76] ml-3" />
-                  Ground
-                </>
-              )}
-              {podiumH > 0 && (
-                <>
-                  <span className="inline-block w-3 h-3 bg-[#a3b08a] ml-3" />
-                  Podium
-                </>
-              )}
-              {basementH > 0 && (
-                <>
-                  <span className="inline-block w-3 h-3 bg-[#bdb9ad] ml-3" />
-                  Basement
-                </>
-              )}
-            </div>
+            )}
           </div>
-        </div>
+        </aside>
       </div>
+
+      {project.parcel && !!project.parcel.imageDataUrl && (
+        <div className="card !p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-ink-100 flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-[13px] font-semibold text-ink-900">Reference plan</span>
+            {project.parcel.calibration && (
+              <span className="tag-ok">Calibrated · {project.parcel.calibration.metres.toFixed(2)} m ref</span>
+            )}
+          </div>
+          <PlanTrace
+            parcel={project.parcel}
+            mode="idle"
+            tracePolygonPx={project.parcel.tracePolygonPx}
+            calibration={project.parcel.calibration}
+            edgeColors={
+              mode === "polygon" && project.parcel.tracePolygonPx
+                ? project.parcel.tracePolygonPx.map((_, i) => edgeColor(i))
+                : undefined
+            }
+            extraPolygons={([
+              ["ground", TIER_SWATCH.ground, "Ground"],
+              ["podium", TIER_SWATCH.podium, "Podium"],
+              ["tower", TIER_SWATCH.tower, "Tower"],
+            ] as const).flatMap(([key, color, label]) => {
+              const t = project.parcel!.tierTracesPx;
+              const plural = key === "ground" ? t?.grounds : key === "podium" ? t?.podiums : t?.towers;
+              const single = t?.[key];
+              const list = plural ?? (single ? [single] : []);
+              return list
+                .filter((pts) => pts.length >= 3)
+                .map((pts, i, arr) => ({
+                  points: pts,
+                  color,
+                  label: arr.length > 1 ? `${label} ${i + 1}` : label,
+                }));
+            })}
+          />
+        </div>
+      )}
 
       {/* First-person immersive walk */}
       {immersive && (
@@ -708,12 +686,12 @@ export default function MassingTab() {
 
       {/* Gemini API key dialog */}
       {keyDialog.open && (
-        <div className="fixed inset-0 z-50 bg-ink-900/55 flex items-center justify-center p-4">
-          <div className="bg-white border border-ink-200 shadow-lg max-w-[440px] w-full p-4 grid gap-3">
+        <div className="fixed inset-0 z-[80] bg-ink-950/55 flex items-center justify-center p-4">
+          <div className="bg-white border border-ink-200 rounded-xl shadow-lift max-w-[440px] w-full p-5 grid gap-3">
             <div>
-              <div className="eyebrow text-ink-500">Google AI Studio</div>
-              <h3 className="text-[15px] font-medium text-ink-900 mt-1">Gemini API key</h3>
-              <p className="text-[11.5px] text-ink-500 mt-1 leading-snug">
+              <div className="text-[12px] font-medium text-ink-500">Google AI Studio</div>
+              <h3 className="text-[16px] font-semibold text-ink-900 mt-0.5">Gemini API key</h3>
+              <p className="text-[12.5px] text-ink-500 mt-1 leading-snug">
                 Get a free key at{" "}
                 <a
                   href="https://aistudio.google.com/app/apikey"
@@ -742,19 +720,16 @@ export default function MassingTab() {
             <div className="flex items-center justify-end gap-2">
               {apiKey && (
                 <button
-                  className="text-[11px] text-red-700 hover:text-red-900 underline mr-auto"
+                  className="text-[12px] text-red-700 hover:text-red-900 underline mr-auto"
                   onClick={() => {
                     persistKey("");
                     setKeyDialog({ open: false, draft: "" });
                   }}
                 >Forget key</button>
               )}
+              <button className="btn btn-secondary btn-xs" onClick={() => setKeyDialog({ open: false, draft: "" })}>Cancel</button>
               <button
-                className="px-3 py-1.5 text-[11px] uppercase tracking-[0.10em] border border-ink-300 text-ink-700 hover:bg-bone-50"
-                onClick={() => setKeyDialog({ open: false, draft: "" })}
-              >Cancel</button>
-              <button
-                className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.10em] bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50"
+                className="btn btn-primary btn-xs"
                 disabled={!keyDialog.draft.trim()}
                 onClick={() => {
                   persistKey(keyDialog.draft.trim());
@@ -768,40 +743,31 @@ export default function MassingTab() {
 
       {/* AI render result */}
       {aiResult && (
-        <div className="fixed inset-0 z-50 bg-ink-900/65 flex items-center justify-center p-4">
-          <div className="bg-white border border-ink-200 shadow-lg max-w-[1100px] w-full max-h-full overflow-auto grid gap-3 p-4">
+        <div className="fixed inset-0 z-[80] bg-ink-950/65 flex items-center justify-center p-4">
+          <div className="bg-white border border-ink-200 rounded-xl shadow-lift max-w-[1100px] w-full max-h-full overflow-auto grid gap-3 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="eyebrow text-ink-500">
+                <div className="text-[13px] font-semibold text-ink-900">
                   AI {aiResult.style === "hyperreal" ? "hyperreal" : "schematic"} render
                 </div>
                 {aiResult.note && (
-                  <p className="text-[11px] text-ink-500 mt-1 leading-snug max-w-[700px]">{aiResult.note}</p>
+                  <p className="text-[12px] text-ink-500 mt-1 leading-snug max-w-[700px]">{aiResult.note}</p>
                 )}
               </div>
-              <button
-                className="text-ink-400 hover:text-ink-700 text-[18px] leading-none"
-                onClick={() => setAiResult(null)}
-                title="Close"
-              >×</button>
+              <button className="p-1.5 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-bone-100" onClick={() => setAiResult(null)} title="Close" aria-label="Close">
+                <X className="w-4 h-4" />
+              </button>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={aiResult.imageDataUrl} alt="AI render of the massing" className="w-full h-auto border border-ink-200" />
+            <img src={aiResult.imageDataUrl} alt="AI render of the massing" className="w-full h-auto rounded-lg border border-ink-200" />
             <div className="flex items-center justify-end gap-2">
               <button
-                className="px-3 py-1.5 text-[11px] uppercase tracking-[0.10em] border border-ink-300 text-ink-700 hover:bg-bone-50"
-                onClick={() => {
-                  const a = document.createElement("a");
-                  a.href = aiResult.imageDataUrl;
-                  a.download = `${project.name.replace(/\s+/g, "-").toLowerCase() || "project"}-ai-${aiResult.style}.png`;
-                  a.click();
-                }}
-              >↓ Download PNG</button>
-              <button
-                className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.10em] bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50"
-                disabled={aiRendering}
-                onClick={handleAiRender}
-              >{aiRendering ? "Rendering…" : "↻ Re-render"}</button>
+                className="btn btn-secondary btn-xs"
+                onClick={() => downloadDataUrl(aiResult.imageDataUrl, `${slug(project.name)}-ai-${aiResult.style}.png`)}
+              ><ImageDown className="w-3.5 h-3.5" /> Download PNG</button>
+              <button className="btn btn-primary btn-xs" disabled={aiRendering} onClick={handleAiRender}>
+                {aiRendering ? "Rendering…" : "↻ Re-render"}
+              </button>
             </div>
           </div>
         </div>
@@ -811,8 +777,461 @@ export default function MassingTab() {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                              Tier setbacks                                 */
+/*                                  Viewer                                    */
 /* -------------------------------------------------------------------------- */
+
+const STYLES: { id: SceneStyle; label: string; hint: string }[] = [
+  { id: "model", label: "Model", hint: "White architectural model with glazing" },
+  { id: "diagram", label: "Diagram", hint: "Colour by tier — basement, ground, podium, tower" },
+  { id: "realistic", label: "Realistic", hint: "Dubai daylight, sky, landscaping" },
+];
+
+const VIEWS: { id: ViewPresetKind; label: string }[] = [
+  { id: "aerial", label: "Aerial" },
+  { id: "street", label: "Street" },
+  { id: "front", label: "Front" },
+  { id: "top", label: "Plan" },
+];
+
+const SUN_DATES: { label: string; m: number; d: number }[] = [
+  { label: "21 Mar", m: 3, d: 21 },
+  { label: "21 Jun", m: 6, d: 21 },
+  { label: "21 Sep", m: 9, d: 21 },
+  { label: "21 Dec", m: 12, d: 21 },
+];
+
+interface ViewerProps {
+  projectId: string;
+  projectName: string;
+  zone: string;
+  plot: Point[];
+  buildable: Point[];
+  volumes: Volume[];
+  floorHeight: number;
+  showFrontMarker: boolean;
+  edgeColors?: string[];
+  volumeLabels: string[];
+  facade: FacadeParams;
+  onAmenityFit: (fit: { pool: boolean; lounge: boolean }) => void;
+  captureRef: React.MutableRefObject<CaptureFn | null>;
+  northDeg: number;
+  metrics: ProjectMetrics;
+  tiersPresent: NonNullable<Volume["kind"]>[];
+  onImmersive: () => void;
+}
+
+const MassingViewer = memo(function MassingViewer(props: ViewerProps) {
+  const {
+    projectId, projectName, zone, plot, buildable, volumes, floorHeight, showFrontMarker, edgeColors,
+    volumeLabels, facade, onAmenityFit, captureRef, northDeg, metrics, tiersPresent, onImmersive,
+  } = props;
+
+  const [style, setStyle] = useState<SceneStyle>("model");
+  const [viewPreset, setViewPreset] = useState<{ kind: ViewPresetKind; nonce: number } | null>(null);
+  const [autoRotate, setAutoRotate] = useState(false);
+  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [showPlanting, setShowPlanting] = useState(true);
+  const [present, setPresent] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const compassRef = useRef<HTMLDivElement>(null);
+
+  // Sun study — Dubai, a chosen day and hour.
+  const year = new Date().getFullYear();
+  const [sunOn, setSunOn] = useState(true);
+  const [sunDate, setSunDate] = useState({ m: 3, d: 21 });
+  const [hour, setHour] = useState(14);
+  const [playing, setPlaying] = useState(false);
+  const daylight = useMemo(() => dubaiDaylight(year, sunDate.m, sunDate.d), [year, sunDate]);
+  const clampedHour = Math.min(daylight.sunset - 0.05, Math.max(daylight.sunrise + 0.05, hour));
+  const sun = useMemo(
+    () => (sunOn ? dubaiSun(year, sunDate.m, sunDate.d, clampedHour) : null),
+    [sunOn, year, sunDate, clampedHour],
+  );
+
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = performance.now();
+    let acc = 0;
+    const tick = (now: number) => {
+      acc += now - last;
+      last = now;
+      // ~12 s for a whole day, updated at ~24 fps.
+      if (acc > 40) {
+        const step = ((daylight.sunset - daylight.sunrise) / 12000) * acc;
+        acc = 0;
+        setHour((h) => {
+          const next = Math.max(h, daylight.sunrise) + step;
+          return next >= daylight.sunset - 0.05 ? daylight.sunrise + 0.05 : next;
+        });
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, daylight]);
+
+  // Presentation mode: Esc exits, and the page behind stops scrolling.
+  useEffect(() => {
+    if (!present) return;
+    document.body.classList.add("present-open");
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPresent(false);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.classList.remove("present-open");
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [present]);
+
+  function requestPreset(kind: ViewPresetKind) {
+    setAutoRotate(false);
+    setViewPreset((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
+  }
+
+  const stats: Array<[string, string]> = useMemo(() => {
+    const out: Array<[string, string]> = [];
+    if (metrics.totalGFA > 0) out.push(["GFA", `${Math.round(metrics.totalGFA).toLocaleString("en-US")} m²`]);
+    if (metrics.units > 0) out.push(["Units", metrics.units.toLocaleString("en-US")]);
+    out.push(["Height", `${metrics.heightCode} · ${metrics.heightM.toFixed(0)} m`]);
+    if (metrics.far !== null) out.push(["FAR", metrics.far.toFixed(2)]);
+    if (metrics.gsa > 0) out.push(["Sellable", `${Math.round(metrics.gsa).toLocaleString("en-US")} m²`]);
+    return out;
+  }, [metrics]);
+
+  // Keep a fresh snapshot of the view for the PDF report: a moment after the
+  // model, style or sun change, and whenever the camera comes to rest.
+  const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snapCaption = `${STYLES.find((s) => s.id === style)?.label ?? ""} view${
+    sun ? ` · Dubai sun ${SUN_DATES.find((d) => d.m === sunDate.m && d.d === sunDate.d)?.label ?? ""} ${formatClock(clampedHour)}` : ""
+  }`;
+  const captionRef = useRef(snapCaption);
+  captionRef.current = snapCaption;
+  const scheduleSnapshot = useCallback(
+    (delay = 1200) => {
+      if (snapTimer.current) clearTimeout(snapTimer.current);
+      snapTimer.current = setTimeout(async () => {
+        const cap = captureRef.current;
+        if (!cap) return;
+        const dataUrl = await cap({ scale: 1.5 });
+        if (dataUrl) setMassingSnapshot({ projectId, dataUrl, caption: captionRef.current, takenAt: Date.now() });
+      }, delay);
+    },
+    [captureRef, projectId],
+  );
+  useEffect(() => {
+    if (playing) return;
+    scheduleSnapshot(2500);
+  }, [scheduleSnapshot, playing, style, sun, volumes, facade, showPlanting]);
+  useEffect(() => () => {
+    if (snapTimer.current) clearTimeout(snapTimer.current);
+  }, []);
+
+  async function exportImage() {
+    const cap = captureRef.current;
+    if (!cap || exporting) return;
+    setExporting(true);
+    try {
+      const shot = await cap({ scale: 2 });
+      if (!shot) return;
+      const when = sun
+        ? ` · sun ${SUN_DATES.find((d) => d.m === sunDate.m && d.d === sunDate.d)?.label ?? ""} ${formatClock(clampedHour)}`
+        : "";
+      const exportStats: Array<[string, string]> = [];
+      if (metrics.totalGFA > 0) exportStats.push(["GFA", `${Math.round(metrics.totalGFA).toLocaleString("en-US")} m²`]);
+      if (metrics.units > 0) exportStats.push(["Units", metrics.units.toLocaleString("en-US")]);
+      exportStats.push(["Height", `${metrics.heightM.toFixed(0)} m`]);
+      if (metrics.far !== null) exportStats.push(["FAR", metrics.far.toFixed(2)]);
+      const img = await composeBrandedImage(shot, {
+        title: projectName || "Untitled project",
+        subtitle: `${zone || BRAND.market} · ${metrics.heightCode} · massing study${when}`,
+        stats: exportStats,
+        brand: BRAND.wordmark,
+        tagline: BRAND.tagline,
+      });
+      downloadDataUrl(img, `${slug(projectName)}-massing.png`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const toolBtn =
+    "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium transition-colors whitespace-nowrap";
+  const glass = "bg-white/85 backdrop-blur-md ring-1 ring-ink-900/10 shadow-sm";
+
+  return (
+    <div
+      className={
+        present
+          ? "fixed inset-0 z-[70] bg-ink-950"
+          : "relative rounded-xl overflow-hidden border border-ink-200/80 shadow-card bg-bone-100 aspect-[3/4] sm:aspect-[4/3] xl:aspect-auto xl:h-[calc(100vh-318px)] xl:min-h-[500px] xl:max-h-[860px]"
+      }
+    >
+      <MassingScene
+        plot={plot}
+        buildable={buildable}
+        volumes={volumes}
+        primaryFootprint={buildable}
+        floorHeight={floorHeight}
+        showFrontMarker={showFrontMarker}
+        edgeColors={edgeColors}
+        volumeLabels={volumeLabels}
+        showAnnotations={showAnnotations && !present}
+        viewPreset={viewPreset}
+        autoRotate={autoRotate}
+        captureRef={captureRef}
+        facade={facade}
+        onAmenityFit={onAmenityFit}
+        style={style}
+        sun={sun}
+        northDeg={northDeg}
+        showPlanting={showPlanting}
+        quality={present ? "high" : "standard"}
+        compassRef={compassRef}
+        frameKey={projectId}
+        onViewSettled={() => !playing && scheduleSnapshot()}
+      />
+
+      {/* Top-left: style + legend */}
+      <div className="absolute z-20 top-3 left-3 grid gap-2 justify-items-start max-w-[calc(100%-24px)]">
+        {present && (
+          <div className={`${glass} rounded-xl px-4 py-3 flex items-center gap-3`}>
+            <BrandMark className="w-9 h-9 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[16px] font-semibold text-ink-900 truncate max-w-[46vw]">{projectName}</div>
+              <div className="text-[12px] text-ink-500 truncate">{zone} · {BRAND.wordmark} massing study</div>
+            </div>
+          </div>
+        )}
+        <div className={`${glass} rounded-lg p-0.5 inline-flex gap-0.5`} role="radiogroup" aria-label="Viewer style">
+          {STYLES.map((s) => (
+            <button
+              key={s.id}
+              role="radio"
+              aria-checked={style === s.id}
+              onClick={() => setStyle(s.id)}
+              title={s.hint}
+              className={`${toolBtn} !h-7 ${style === s.id ? "bg-ink-900 text-white" : "text-ink-700 hover:bg-ink-900/5"}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {style === "diagram" && (
+          <div className={`${glass} rounded-lg px-2.5 py-2 grid gap-1`} aria-label="Legend">
+            {tiersPresent.map((k) => (
+              <div key={k} className="flex items-center gap-2 text-[11.5px] text-ink-700">
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ background: TIER_SWATCH[k], opacity: k === "basement" ? 0.6 : 1 }} />
+                {k === "tower" ? "Tower · residential" : k[0].toUpperCase() + k.slice(1)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Top-right: camera */}
+      <div className="absolute z-20 top-3 right-3 flex items-center gap-2">
+        <div className={`${glass} rounded-lg p-0.5 hidden sm:inline-flex gap-0.5`} aria-label="Camera views">
+          {VIEWS.map((v) => (
+            <button key={v.id} onClick={() => requestPreset(v.id)} className={`${toolBtn} !h-7 text-ink-700 hover:bg-ink-900/5`} title={`${v.label} view`}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setAutoRotate((v) => !v)}
+          className={`${toolBtn} ${glass} ${autoRotate ? "!bg-ink-900 text-white" : "text-ink-700 hover:bg-white"}`}
+          title="Turntable rotation"
+          aria-pressed={autoRotate}
+        >
+          <Rotate3d className="w-4 h-4" />
+        </button>
+        {present && (
+          <button onClick={() => setPresent(false)} className={`${toolBtn} ${glass} text-ink-700 hover:bg-white`} title="Exit presentation (Esc)">
+            <X className="w-4 h-4" /> Exit
+          </button>
+        )}
+      </div>
+
+      {/* Mobile camera row */}
+      <div className={`sm:hidden absolute z-20 top-[52px] right-3 ${glass} rounded-lg p-0.5 inline-flex gap-0.5`}>
+        {VIEWS.map((v) => (
+          <button key={v.id} onClick={() => requestPreset(v.id)} className={`${toolBtn} !h-7 !px-2 text-ink-700`}>
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Bottom: compass + sun study + actions. Phones get two rows (sun bar on
+          top, compass + actions under it); wider screens a single row. */}
+      <div className="absolute z-20 left-3 right-3 bottom-3 grid gap-2 sm:flex sm:flex-wrap sm:items-end">
+        <div className={`${glass} order-1 sm:order-2 rounded-xl px-3 py-2 grid gap-1.5 sm:flex sm:items-center sm:gap-3 min-w-0 sm:min-w-[440px]`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setSunOn((v) => !v)}
+              className={`w-8 h-8 rounded-lg grid place-items-center shrink-0 ${sunOn ? "bg-sand-100 text-sand-700 ring-1 ring-sand-300" : "text-ink-400 hover:bg-ink-900/5"}`}
+              title={sunOn ? "Sun & shadow study on — Dubai" : "Turn the Dubai sun & shadow study on"}
+              aria-pressed={sunOn}
+            >
+              <Sun className="w-4 h-4" />
+            </button>
+            {sunOn ? (
+              <>
+                <div className="flex items-center gap-0.5 sm:gap-1" role="radiogroup" aria-label="Day of the year">
+                  {SUN_DATES.map((d) => {
+                    const active = d.m === sunDate.m && d.d === sunDate.d;
+                    return (
+                      <button
+                        key={d.label}
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={d.label}
+                        onClick={() => setSunDate({ m: d.m, d: d.d })}
+                        className={`h-7 px-1.5 sm:px-2 rounded-md text-[11.5px] font-medium whitespace-nowrap ${active ? "bg-ink-900 text-white" : "text-ink-600 hover:bg-ink-900/5"}`}
+                      >
+                        <span className="sm:hidden">{d.label.split(" ")[1]}</span>
+                        <span className="hidden sm:inline">{d.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="sm:hidden ml-auto text-right leading-tight shrink-0">
+                  <div className="text-[13px] font-semibold text-ink-900 tabular-nums">{formatClock(clampedHour)}</div>
+                </div>
+              </>
+            ) : (
+              <span className="text-[12px] text-ink-500 pr-2">Sun study off — studio light</span>
+            )}
+          </div>
+          {sunOn && (
+            <div className="flex items-center gap-2 flex-1 min-w-0 sm:min-w-[180px]">
+              <button
+                onClick={() => setPlaying((p) => !p)}
+                className="w-7 h-7 rounded-md grid place-items-center text-ink-700 hover:bg-ink-900/5 shrink-0"
+                title={playing ? "Pause the day" : "Play the day — sunrise to sunset"}
+                aria-label={playing ? "Pause" : "Play"}
+              >
+                {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </button>
+              <input
+                type="range"
+                min={Math.ceil(daylight.sunrise * 12) / 12}
+                max={Math.floor(daylight.sunset * 12) / 12}
+                step={1 / 12}
+                value={clampedHour}
+                onChange={(e) => {
+                  setPlaying(false);
+                  setHour(parseFloat(e.target.value));
+                }}
+                className="flex-1 accent-[#b88a42] min-w-[80px]"
+                aria-label="Time of day"
+              />
+              <div className="text-right leading-tight shrink-0 w-[70px] sm:w-[92px]">
+                <div className="hidden sm:block text-[13px] font-semibold text-ink-900 tabular-nums">{formatClock(clampedHour)}</div>
+                <div className="text-[10.5px] text-ink-500 tabular-nums whitespace-nowrap">
+                  {sun ? `alt ${sun.altitudeDeg.toFixed(0)}° · az ${sun.azimuthDeg.toFixed(0)}°` : ""}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="order-2 flex items-end justify-between gap-2 sm:contents">
+          <div className={`${glass} sm:order-1 w-11 h-11 rounded-full grid place-items-center shrink-0`} title="North">
+            <div ref={compassRef} className="w-8 h-8 relative" aria-label="North arrow">
+              <svg viewBox="0 0 32 32" className="w-8 h-8">
+                <path d="M16 3 L20 16 L16 14 L12 16 Z" fill="#0d7f69" />
+                <path d="M16 29 L12 16 L16 18 L20 16 Z" fill="#c2c8d3" />
+              </svg>
+              <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-[8px] font-bold text-brand-700">N</span>
+            </div>
+          </div>
+
+          <div className={`${glass} sm:order-3 rounded-xl p-1 flex items-center gap-0.5 sm:ml-auto`}>
+            <button
+              onClick={() => setShowAnnotations((v) => !v)}
+              className={`${toolBtn} ${showAnnotations ? "text-brand-700 bg-brand-50" : "text-ink-600 hover:bg-ink-900/5"}`}
+              title="Height dimension and tier labels"
+              aria-label="Dimensions and labels"
+              aria-pressed={showAnnotations}
+            >
+              <Ruler className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowPlanting((v) => !v)}
+              className={`${toolBtn} ${showPlanting ? "text-brand-700 bg-brand-50" : "text-ink-600 hover:bg-ink-900/5"}`}
+              title="Street trees and palms"
+              aria-label="Street trees and palms"
+              aria-pressed={showPlanting}
+            >
+              <TreePalm className="w-4 h-4" />
+            </button>
+            <button onClick={() => void exportImage()} className={`${toolBtn} text-ink-700 hover:bg-ink-900/5`} title="Download a branded presentation image (PNG)" aria-label="Download image" disabled={exporting}>
+              {exporting ? <Camera className="w-4 h-4 animate-pulse" /> : <ImageDown className="w-4 h-4" />}
+              <span className="hidden md:inline">Image</span>
+            </button>
+            {!present && (
+              <button onClick={() => setPresent(true)} className={`${toolBtn} text-ink-700 hover:bg-ink-900/5`} title="Full-screen presentation mode" aria-label="Present">
+                <Maximize2 className="w-4 h-4" />
+                <span className="hidden md:inline">Present</span>
+              </button>
+            )}
+            <button onClick={onImmersive} className={`${toolBtn} bg-brand-600 text-white hover:bg-brand-700`} title="Walk around the building in first person — WASD + mouse" aria-label="Walk">
+              <Footprints className="w-4 h-4" />
+              <span className="hidden md:inline">Walk</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Presentation KPI band */}
+      {present && (
+        <div className="absolute z-20 left-1/2 -translate-x-1/2 bottom-[132px] sm:bottom-[76px] max-w-[calc(100%-24px)]">
+          <div className={`${glass} rounded-2xl px-2 py-2 flex items-stretch overflow-x-auto no-scrollbar`}>
+            {stats.map(([label, value]) => (
+              <div key={label} className="px-4 py-1 border-r last:border-r-0 border-ink-900/10 min-w-[120px]">
+                <div className="text-[11.5px] text-ink-500 font-medium whitespace-nowrap">{label}</div>
+                <div className="text-[18px] font-semibold text-ink-900 whitespace-nowrap tracking-tight">{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+/* -------------------------------------------------------------------------- */
+/*                              Inspector panels                              */
+/* -------------------------------------------------------------------------- */
+
+function NorthControl({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="text-[12.5px] font-semibold text-ink-800 flex items-center gap-2">
+          <CompassIcon className="w-4 h-4 text-ink-400" /> True north
+        </span>
+        <span className="text-[12px] text-ink-500 tabular-nums">{value.toFixed(0)}°</span>
+      </div>
+      <div className="p-3 grid gap-2">
+        <input
+          type="range"
+          min={-180}
+          max={180}
+          step={1}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          className="w-full accent-[#0d7f69]"
+          aria-label="True north bearing"
+        />
+        <p className="text-[11.5px] text-ink-500 leading-snug">
+          Bearing of true north, clockwise from the top of the plot drawing. Copy it from the north arrow on the
+          affection plan (0° = drawing is north-up). It orients the sun & shadow study.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function TierSummary({
   groundCount, groundHeightM,
@@ -828,38 +1247,32 @@ function TierSummary({
   groundArea: number; podiumArea: number; towerArea: number; plotArea: number;
 }) {
   const rows: Array<{ label: string; floors: number; heightM: number; footprint: number; kind: "basement" | "ground" | "podium" | "tower" }> = [
-    { label: "Basement", floors: basementCount, heightM: basementHeightM, footprint: plotArea, kind: "basement" },
-    { label: "Ground", floors: groundCount, heightM: groundHeightM, footprint: groundArea, kind: "ground" },
+    { label: "Tower", floors: towerCount, heightM: towerHeightM, footprint: towerArea, kind: "tower" },
     { label: "Podium", floors: podiumCount, heightM: podiumHeightM, footprint: podiumArea, kind: "podium" },
-    { label: "Tower (type floors)", floors: towerCount, heightM: towerHeightM, footprint: towerArea, kind: "tower" },
+    { label: "Ground", floors: groundCount, heightM: groundHeightM, footprint: groundArea, kind: "ground" },
+    { label: "Basement", floors: basementCount, heightM: basementHeightM, footprint: plotArea, kind: "basement" },
   ];
-  const swatch: Record<typeof rows[number]["kind"], string> = {
-    basement: "#bdb9ad",
-    ground: "#8a9a76",
-    podium: "#a3b08a",
-    tower: "#647d57",
-  };
   return (
-    <div className="border border-ink-200">
-      <div className="grid grid-cols-[1fr_70px_70px_90px] gap-1 px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 bg-bone-50 border-b border-ink-200">
+    <div className="panel">
+      <div className="grid grid-cols-[1fr_52px_60px_78px] gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
         <div>Tier</div>
         <div className="text-right">Floors</div>
-        <div className="text-right">Floor h m</div>
-        <div className="text-right">Footprint m²</div>
+        <div className="text-right">Fl. h</div>
+        <div className="text-right">Plate m²</div>
       </div>
       {rows.map((r) => (
-        <div key={r.kind} className="grid grid-cols-[1fr_70px_70px_90px] gap-1 px-3 py-2 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0">
+        <div key={r.kind} className="grid grid-cols-[1fr_52px_60px_78px] gap-1 px-3 py-2 items-center text-[12.5px] tabular-nums border-b border-ink-100 last:border-b-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-block w-3 h-3 shrink-0" style={{ backgroundColor: swatch[r.kind] }} />
+            <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: TIER_SWATCH[r.kind] }} />
             <span className="text-ink-900 truncate">{r.label}</span>
           </div>
           <div className="text-right text-ink-700">{r.floors > 0 ? r.floors : "—"}</div>
-          <div className="text-right text-ink-700">{r.heightM > 0 ? r.heightM.toFixed(2) : "—"}</div>
-          <div className="text-right text-ink-900">{r.footprint > 0 ? Math.round(r.footprint).toLocaleString("en-US") : "—"}</div>
+          <div className="text-right text-ink-700">{r.floors > 0 && r.heightM > 0 ? r.heightM.toFixed(2) : "—"}</div>
+          <div className="text-right text-ink-900">{r.floors > 0 && r.footprint > 0 ? Math.round(r.footprint).toLocaleString("en-US") : "—"}</div>
         </div>
       ))}
-      <div className="px-3 py-2 text-[10.5px] text-ink-500 leading-snug border-t border-ink-100">
-        Floor counts and heights come from <strong>Setup → Floor breakdown</strong>. Edit there to change them.
+      <div className="px-3 py-2 text-[11.5px] text-ink-500 leading-snug bg-bone-50/60">
+        Floor counts and heights come from <strong>Setup → Floor breakdown</strong>.
       </div>
     </div>
   );
@@ -899,64 +1312,70 @@ function SetbacksTable({
     else onPatch({ towerSetbackM: safe, towerSetbackPerEdge: next });
   }
 
+  const inputCls = "cell-input text-right !py-1 !px-1.5 !text-[12.5px]";
+  const cols = "grid grid-cols-[16px_18px_1fr_54px_54px_54px] gap-1";
+
   return (
-    <div className="border border-ink-200">
-      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200">
-        <div className="eyebrow text-ink-500 text-[10px] mb-1.5">Setbacks per edge (m)</div>
-        <div className="grid grid-cols-[24px_28px_1fr_60px_60px_60px] gap-1 text-[10px] uppercase tracking-[0.08em] text-ink-500">
+    <div className="panel">
+      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200/80">
+        <div className="text-[12.5px] font-semibold text-ink-800 mb-1.5">Setbacks per edge (m)</div>
+        <div className={`${cols} text-[10.5px] font-semibold uppercase tracking-[0.05em] text-ink-500`}>
           <span></span>
           <span>#</span>
           <span>Length</span>
-          <span className="text-right text-[#8a9a76]">Ground</span>
-          <span className="text-right text-[#a3b08a]">Podium</span>
-          <span className="text-right text-[#647d57]">Tower</span>
+          <span className="text-right">Ground</span>
+          <span className="text-right">Podium</span>
+          <span className="text-right">Tower</span>
         </div>
       </div>
-      <div className="max-h-[280px] overflow-y-auto">
+      <div className="max-h-[260px] overflow-y-auto scroll-thin">
         {plotPoly.map((_, i) => {
           const color = edgeColor(i);
           return (
-            <div key={i} className="grid grid-cols-[24px_28px_1fr_60px_60px_60px] gap-1 px-3 py-1 items-center text-[11.5px] tabular-nums border-b border-ink-100 last:border-b-0">
-              <span className="block w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
+            <div key={i} className={`${cols} px-3 py-1 items-center text-[12px] tabular-nums border-b border-ink-100 last:border-b-0`}>
+              <span className="block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color }} />
               <span className="text-[11px] text-ink-500">{i + 1}</span>
-              <span className="text-ink-700">{fmt2(lengths[i] ?? 0)} m</span>
+              <span className="text-ink-700 truncate">{fmt2(lengths[i] ?? 0)} m</span>
               <input
                 type="number"
                 step={0.5}
                 min={0}
-                className="cell-input text-right !py-0.5 !px-1.5"
+                className={inputCls}
                 value={Number((groundEdges[i] ?? groundUni).toFixed(1))}
                 onChange={(e) => updateEdge("ground", i, parseFloat(e.target.value) || 0)}
+                aria-label={`Ground setback, edge ${i + 1}`}
               />
               <input
                 type="number"
                 step={0.5}
                 min={0}
-                className="cell-input text-right !py-0.5 !px-1.5"
+                className={inputCls}
                 value={Number((podiumEdges[i] ?? podiumUni).toFixed(1))}
                 onChange={(e) => updateEdge("podium", i, parseFloat(e.target.value) || 0)}
+                aria-label={`Podium setback, edge ${i + 1}`}
               />
               <input
                 type="number"
                 step={0.5}
                 min={0}
-                className="cell-input text-right !py-0.5 !px-1.5"
+                className={inputCls}
                 value={Number((towerEdges[i] ?? towerUni).toFixed(1))}
                 onChange={(e) => updateEdge("tower", i, parseFloat(e.target.value) || 0)}
+                aria-label={`Tower setback, edge ${i + 1}`}
               />
             </div>
           );
         })}
       </div>
-      <div className="grid grid-cols-[24px_28px_1fr_60px_60px_60px] gap-1 px-3 py-2 items-center text-[10.5px] uppercase tracking-[0.10em] text-ink-500 bg-bone-50/40 border-t border-ink-200">
+      <div className={`${cols} px-3 py-2 items-center text-[11.5px] text-ink-600 bg-brand-50/60 border-t border-ink-200/80`}>
         <span></span>
         <span></span>
-        <span>Apply uniform →</span>
+        <span className="font-medium">All edges →</span>
         <input
           type="number"
           step={0.5}
           min={0}
-          className="cell-input text-right !py-0.5 !px-1.5"
+          className={inputCls}
           value={Number(groundUni.toFixed(1))}
           onChange={(e) => applyUniform("ground", parseFloat(e.target.value) || 0)}
           title="Set every edge to this value for Ground"
@@ -965,7 +1384,7 @@ function SetbacksTable({
           type="number"
           step={0.5}
           min={0}
-          className="cell-input text-right !py-0.5 !px-1.5"
+          className={inputCls}
           value={Number(podiumUni.toFixed(1))}
           onChange={(e) => applyUniform("podium", parseFloat(e.target.value) || 0)}
           title="Set every edge to this value for Podium"
@@ -974,33 +1393,21 @@ function SetbacksTable({
           type="number"
           step={0.5}
           min={0}
-          className="cell-input text-right !py-0.5 !px-1.5"
+          className={inputCls}
           value={Number(towerUni.toFixed(1))}
           onChange={(e) => applyUniform("tower", parseFloat(e.target.value) || 0)}
           title="Set every edge to this value for Tower"
         />
       </div>
-      <p className="px-3 py-2 text-[10.5px] text-ink-500 leading-snug border-t border-ink-100">
-        Basement always follows the plot line (no setback). The colour swatch matches the edge in the
-        3D viewer and on the reference plan.
+      <p className="px-3 py-2 text-[11.5px] text-ink-500 leading-snug border-t border-ink-100">
+        Basement always follows the plot line. The colour swatch matches the edge in the 3D viewer and on the
+        reference plan.
       </p>
     </div>
   );
 }
 
-interface FacadePanelParams {
-  mode: "massing" | "residential";
-  panelWidthM: number;
-  balconyDepthM: number;
-  balconyEveryNBays: number;
-  solidPanelRatio: number;
-  balconyLayout: "rhythm" | "random";
-  patternSeed: number;
-  groundPodiumTreatment: "massing" | "fins";
-  finSpacingM: number;
-  finWidthM: number;
-  finDepthM: number;
-}
+type FacadePanelParams = Omit<FacadeParams, "podiumPool" | "podiumLoungeBbq">;
 
 function FacadePanel({
   params, onPatch,
@@ -1011,27 +1418,23 @@ function FacadePanel({
   const residential = params.mode === "residential";
   const fins = params.groundPodiumTreatment === "fins";
   return (
-    <div className="border border-ink-200">
-      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200 flex items-center justify-between gap-2">
-        <span className="eyebrow text-ink-500 text-[10px]">Facade · Tower</span>
-        <div className="inline-flex border border-ink-200 bg-white">
+    <div className="panel">
+      <div className="panel-head">
+        <span className="text-[12.5px] font-semibold text-ink-800 flex items-center gap-2">
+          <Building className="w-4 h-4 text-ink-400" /> Tower façade
+        </span>
+        <div className="seg">
+          <button className="seg-btn !py-0.5" data-active={!residential} onClick={() => onPatch({ mode: "massing" })}>Massing</button>
           <button
-            onClick={() => onPatch({ mode: "massing" })}
-            className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-              !residential ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-            }`}
-          >Massing</button>
-          <button
+            className="seg-btn !py-0.5"
+            data-active={residential}
             onClick={() => onPatch({ mode: "residential" })}
-            className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-              residential ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-            }`}
             title="Model the tower facade: floor slabs, glazing, mullions and balconies"
           >Residential</button>
         </div>
       </div>
       {residential && (
-        <div className="p-3 grid gap-2">
+        <div className="p-3 grid gap-3">
           <div className="grid grid-cols-3 gap-2">
             <Field label="Bay width m">
               <input
@@ -1093,14 +1496,13 @@ function FacadePanel({
               />
             </Field>
             <Field label="Balcony layout">
-              <div className="inline-flex border border-ink-200 bg-white">
+              <div className="seg">
                 {([["rhythm", "Rhythm"], ["random", "Random"]] as const).map(([id, label]) => (
                   <button
                     key={id}
+                    className="seg-btn !py-[5px]"
+                    data-active={params.balconyLayout === id}
                     onClick={() => onPatch({ balconyLayout: id })}
-                    className={`px-2.5 py-[7px] text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-                      params.balconyLayout === id ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-                    }`}
                     title={id === "rhythm" ? "Balconies stack in regular columns" : "Balconies scattered randomly across the facade"}
                   >{label}</button>
                 ))}
@@ -1108,31 +1510,21 @@ function FacadePanel({
             </Field>
           </div>
           <button
-            className="px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.10em] border border-ink-300 bg-white text-ink-800 hover:bg-bone-50 transition-colors"
+            className="btn btn-secondary btn-xs justify-self-start"
             onClick={() => onPatch({ patternSeed: Math.floor(Math.random() * 100000) + 1 })}
             title="Re-roll the random pattern of solid panels and scattered balconies"
           >⤲ Shuffle pattern</button>
-          <p className="text-[10.5px] text-ink-500 leading-snug">
-            Applies to the tower: floor slabs, recessed glazing, mullions on the bay rhythm,
-            solid panels scattered at the given share, and balconies.
-          </p>
         </div>
       )}
 
-      <div className="px-3 py-2 bg-bone-50 border-y border-ink-200 flex items-center justify-between gap-2">
-        <span className="eyebrow text-ink-500 text-[10px]">Facade · Ground / Podium</span>
-        <div className="inline-flex border border-ink-200 bg-white">
+      <div className="panel-head border-t border-ink-200/80">
+        <span className="text-[12.5px] font-semibold text-ink-800">Ground & podium</span>
+        <div className="seg">
+          <button className="seg-btn !py-0.5" data-active={!fins} onClick={() => onPatch({ groundPodiumTreatment: "massing" })}>Massing</button>
           <button
-            onClick={() => onPatch({ groundPodiumTreatment: "massing" })}
-            className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-              !fins ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-            }`}
-          >Massing</button>
-          <button
+            className="seg-btn !py-0.5"
+            data-active={fins}
             onClick={() => onPatch({ groundPodiumTreatment: "fins" })}
-            className={`px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.10em] transition-colors ${
-              fins ? "bg-ink-900 text-bone-100" : "text-ink-700 hover:bg-bone-100"
-            }`}
             title="Wrap ground and podium in a vertical fin / louvre screen"
           >Vertical fins</button>
         </div>
@@ -1165,12 +1557,11 @@ function FacadePanel({
               title="How far the fins project outward from the facade"
             />
           </div>
-          <p className="text-[10.5px] text-ink-500 leading-snug">
-            Full-height vertical blades wrap the Ground and Podium perimeter, spaced evenly
-            per edge, in front of the solid volume underneath.
-          </p>
         </div>
       )}
+      <p className="px-3 py-2 text-[11.5px] text-ink-500 leading-snug border-t border-ink-100">
+        The Diagram style always shows plain tier volumes; Model and Realistic show the façade.
+      </p>
     </div>
   );
 }
@@ -1187,12 +1578,12 @@ function PodiumAmenitiesPanel({
 }) {
   const deckLabel = deckKind === "podium" ? "podium" : "ground floor";
   return (
-    <div className="border border-ink-200">
-      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200">
-        <span className="eyebrow text-ink-500 text-[10px]">Roof amenities</span>
+    <div className="panel">
+      <div className="panel-head">
+        <span className="text-[12.5px] font-semibold text-ink-800">Roof amenities</span>
       </div>
       <div className="p-3 grid gap-2">
-        <label className={`flex items-center gap-2 text-[12px] ${hasDeck ? "text-ink-900" : "text-ink-400"}`}>
+        <label className={`flex items-center gap-2 text-[13px] ${hasDeck ? "text-ink-900" : "text-ink-400"}`}>
           <input
             type="checkbox"
             checked={pool}
@@ -1202,12 +1593,12 @@ function PodiumAmenitiesPanel({
           Swimming pool
         </label>
         {pool && hasDeck && !fit.pool && (
-          <p className="text-[10.5px] text-amber-700 leading-snug pl-5 -mt-1">
+          <p className="text-[11.5px] text-amber-800 leading-snug pl-5 -mt-1">
             No room on the {deckLabel} deck for a pool — the ring between the tower and the {deckLabel}
-            edge is too narrow. Increase Tower setback or reduce {deckKind === "podium" ? "Podium" : "Ground"} setback per edge above.
+            edge is too narrow. Increase Tower setback or reduce {deckKind === "podium" ? "Podium" : "Ground"} setback per edge.
           </p>
         )}
-        <label className={`flex items-center gap-2 text-[12px] ${hasDeck ? "text-ink-900" : "text-ink-400"}`}>
+        <label className={`flex items-center gap-2 text-[13px] ${hasDeck ? "text-ink-900" : "text-ink-400"}`}>
           <input
             type="checkbox"
             checked={lounge}
@@ -1217,14 +1608,14 @@ function PodiumAmenitiesPanel({
           Lounge &amp; BBQ terrace
         </label>
         {lounge && hasDeck && !fit.lounge && (
-          <p className="text-[10.5px] text-amber-700 leading-snug pl-5 -mt-1">
+          <p className="text-[11.5px] text-amber-800 leading-snug pl-5 -mt-1">
             No room on the {deckLabel} deck for a lounge terrace — same fix: widen the ring by
-            adjusting the Tower / {deckKind === "podium" ? "Podium" : "Ground"} setbacks per edge above.
+            adjusting the Tower / {deckKind === "podium" ? "Podium" : "Ground"} setbacks per edge.
           </p>
         )}
-        <p className="text-[10.5px] text-ink-500 leading-snug">
+        <p className="text-[11.5px] text-ink-500 leading-snug">
           {hasDeck
-            ? `Placed on the ${deckLabel} roof ring exposed once the (further set back) tower rises above it — only if there is enough clear depth. Uses the Podium deck when there is one, otherwise the Ground floor roof.`
+            ? `Placed on the ${deckLabel} roof ring exposed once the (further set back) tower rises above it — only if there is enough clear depth.`
             : "Add ground or podium floors in Setup → Floor breakdown to unlock roof amenities."}
         </p>
       </div>
@@ -1240,9 +1631,9 @@ function TowerOffset({
   onPatch: (p: Partial<ReturnType<typeof useProject>>) => void;
 }) {
   return (
-    <div className="border border-ink-200">
-      <div className="px-3 py-2 bg-bone-50 border-b border-ink-200">
-        <div className="eyebrow text-ink-500 text-[10px]">Tower position offset (m)</div>
+    <div className="panel">
+      <div className="panel-head">
+        <span className="text-[12.5px] font-semibold text-ink-800">Tower position offset (m)</span>
       </div>
       <div className="grid grid-cols-2 gap-3 p-3">
         <Field label="X (right +)">
@@ -1264,7 +1655,7 @@ function TowerOffset({
           />
         </Field>
       </div>
-      <p className="px-3 pb-3 text-[10.5px] text-ink-500 leading-snug">
+      <p className="px-3 pb-3 text-[11.5px] text-ink-500 leading-snug">
         Shift the tower footprint after the setback offset. Leave at 0 for a centred tower.
       </p>
     </div>
@@ -1284,16 +1675,15 @@ function RectangularInputs({
 }) {
   return (
     <div>
-      <div className="eyebrow text-ink-500 mb-2">Plot dimensions (m)</div>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Frontage">
+        <Field label="Frontage (m)">
           <NumInput value={project.plotFrontage} onChange={(v) => patch({ plotFrontage: v })} placeholder={placeholder} />
         </Field>
-        <Field label="Depth">
+        <Field label="Depth (m)">
           <NumInput value={project.plotDepth} onChange={(v) => patch({ plotDepth: v })} placeholder={placeholder} />
         </Field>
       </div>
-      <p className="text-[11px] text-ink-500 mt-2">
+      <p className="text-[11.5px] text-ink-500 mt-2">
         Empty fields fall back to a square derived from plot area.
       </p>
     </div>
@@ -1315,32 +1705,32 @@ function PolygonInputs({
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <div className="eyebrow text-ink-500">Vertices (m)</div>
+        <div className="text-[12px] font-medium text-ink-600">Vertices (m)</div>
         <button
           onClick={onRecentre}
-          className="text-[10.5px] uppercase tracking-[0.10em] text-brand-700 hover:text-brand-900"
+          className="text-[12px] font-medium text-brand-700 hover:text-brand-900"
           title="Re-centre the polygon at the origin"
         >Centre</button>
       </div>
-      <div className="border border-ink-200">
-        <div className="grid grid-cols-[28px_1fr_1fr_92px_28px] gap-1 px-2 py-1.5 text-[10.5px] uppercase tracking-[0.10em] text-ink-500 bg-bone-50 border-b border-ink-200">
+      <div className="panel">
+        <div className="grid grid-cols-[24px_1fr_1fr_76px_24px] gap-1 px-2 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-ink-500 bg-bone-50 border-b border-ink-200/80">
           <span>#</span><span>X</span><span>Y</span><span className="text-right">Edge →</span><span></span>
         </div>
-        <div className="max-h-[240px] overflow-y-auto">
+        <div className="max-h-[240px] overflow-y-auto scroll-thin">
           {vertices.map((v, i) => (
-            <div key={i} className="grid grid-cols-[28px_1fr_1fr_92px_28px] gap-1 px-2 py-1 items-center border-b border-ink-100 last:border-b-0">
+            <div key={i} className="grid grid-cols-[24px_1fr_1fr_76px_24px] gap-1 px-2 py-1 items-center border-b border-ink-100 last:border-b-0">
               <span className="text-[11px] text-ink-500 tabular-nums">{i + 1}</span>
               <input
                 type="number"
                 step={0.01}
-                className="cell-input text-right"
+                className="cell-input text-right !py-1 !px-1.5"
                 value={v.x}
                 onChange={(e) => onUpdate(i, { x: parseFloat(e.target.value) || 0 })}
               />
               <input
                 type="number"
                 step={0.01}
-                className="cell-input text-right"
+                className="cell-input text-right !py-1 !px-1.5"
                 value={v.y}
                 onChange={(e) => onUpdate(i, { y: parseFloat(e.target.value) || 0 })}
               />
@@ -1357,7 +1747,7 @@ function PolygonInputs({
               <span className="col-span-3 -mt-0.5 -mb-0.5">
                 <button
                   onClick={() => onAddAfter(i)}
-                  className="block w-full text-[10px] text-ink-400 hover:text-brand-700 hover:bg-brand-50 py-0.5"
+                  className="block w-full rounded text-[10.5px] text-ink-400 hover:text-brand-700 hover:bg-brand-50 py-0.5"
                   title="Insert vertex after this one"
                 >+ insert vertex here</button>
               </span>
@@ -1366,7 +1756,7 @@ function PolygonInputs({
           ))}
         </div>
       </div>
-      <div className="mt-2 text-[11px] text-ink-500 flex justify-between">
+      <div className="mt-2 text-[11.5px] text-ink-500 flex justify-between">
         <span>{vertices.length} vertices</span>
         <span className="tabular-nums">Perimeter: {fmt2(perimeter)} m</span>
       </div>
@@ -1381,7 +1771,7 @@ function PolygonInputs({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-[10.5px] uppercase tracking-[0.10em] text-ink-500">{label}</span>
+      <span className="text-[11.5px] font-medium text-ink-600">{label}</span>
       {children}
     </label>
   );
@@ -1466,13 +1856,13 @@ function NumInput({
   );
 }
 
-function HeroStat({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function HeroStat({ label, value, unit, title }: { label: string; value: string; unit?: string; title?: string }) {
   return (
-    <div className="px-3 py-2.5">
-      <div className="eyebrow text-ink-500 text-[9.5px] mb-0.5">{label}</div>
-      <div className="text-ink-900 tabular-nums text-xl font-semibold leading-none">
+    <div className="rounded-lg bg-bone-50 ring-1 ring-inset ring-ink-200/70 px-3 py-2.5" title={title}>
+      <div className="text-[11.5px] font-medium text-ink-500 mb-1">{label}</div>
+      <div className="text-ink-900 text-[22px] font-semibold leading-none tracking-tight">
         {value}
-        {unit && <span className="text-[12px] font-normal text-ink-500 ml-1">{unit}</span>}
+        {unit && <span className="text-[12px] font-medium text-ink-500 ml-1">{unit}</span>}
       </div>
     </div>
   );
@@ -1481,8 +1871,8 @@ function HeroStat({ label, value, unit }: { label: string; value: string; unit?:
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="eyebrow text-ink-500 text-[10px]">{label}</div>
-      <div className="text-ink-900 tabular-nums">{value}</div>
+      <div className="text-[11.5px] font-medium text-ink-500">{label}</div>
+      <div className="text-ink-900 tabular-nums text-[13.5px]">{value}</div>
     </div>
   );
 }
@@ -1495,12 +1885,12 @@ function Collapsible({
   children: React.ReactNode;
 }) {
   return (
-    <details className="border border-ink-200" open={defaultOpen}>
-      <summary className="cursor-pointer list-none px-3 py-2 bg-bone-50 border-b border-ink-200 text-[11px] uppercase tracking-[0.10em] text-ink-700 hover:bg-bone-100 flex items-center justify-between">
+    <details className="panel group" open={defaultOpen}>
+      <summary className="cursor-pointer list-none px-3 py-2 bg-bone-50 text-[12.5px] font-semibold text-ink-800 hover:bg-bone-100 flex items-center justify-between">
         <span>{title}</span>
-        <span className="text-ink-400 text-[14px] leading-none">▾</span>
+        <span className="text-ink-400 text-[14px] leading-none transition-transform group-open:rotate-180">▾</span>
       </summary>
-      <div className="grid gap-4 p-3">{children}</div>
+      <div className="grid gap-4 p-3 border-t border-ink-200/80">{children}</div>
     </details>
   );
 }

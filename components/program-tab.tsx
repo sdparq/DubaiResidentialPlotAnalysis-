@@ -12,6 +12,25 @@ import {
   type Typology,
   type UnitCategory,
 } from "@/lib/types";
+import { StackedBar } from "./ui/stacked-bar";
+
+/** Ordinal ramp (small → large units), one hue light → dark. */
+const CATEGORY_RAMP: Record<UnitCategory, string> = {
+  Studio: "#5fbaa4",
+  "1BR": "#2a9d84",
+  "2BR": "#0d7f69",
+  "3BR": "#0b6c5a",
+  "4BR": "#0a584a",
+  Penthouse: "#0a473d",
+};
+const CATEGORY_LABEL: Record<UnitCategory, string> = {
+  Studio: "Studio",
+  "1BR": "1 Bedroom",
+  "2BR": "2 Bedrooms",
+  "3BR": "3 Bedrooms",
+  "4BR": "4 Bedrooms",
+  Penthouse: "Penthouse",
+};
 
 const CATEGORY_FOR_TYPOLOGY_KEY: Record<TypologyKey, UnitCategory | null> = {
   studio: "Studio",
@@ -56,8 +75,9 @@ export default function ProgramTab() {
 
   if (project.typologies.length === 0) {
     return (
-      <div className="card text-center text-ink-500 italic py-10">
-        Add typologies first (tab 02) to start filling the program.
+      <div className="card text-center text-ink-500 py-12">
+        <div className="text-[15px] font-semibold text-ink-800">No typologies yet</div>
+        <p className="text-[13px] mt-1">Add unit typologies in step 04 · Typologies to start filling the apartments matrix.</p>
       </div>
     );
   }
@@ -83,8 +103,8 @@ export default function ProgramTab() {
 
       <div className="card">
         <div className="mb-5">
-          <h2 className="section-title">Apartments — units per floor</h2>
-          <p className="section-sub">Set the count of each typology on each floor. Subtotals update live.</p>
+          <h2 className="section-title">Units per floor</h2>
+          <p className="section-sub">Set the count of each typology on each floor — totals, parking and lifts update live.</p>
         </div>
         <div className="w-full">
           <table className="tbl table-fixed w-full" style={{ minWidth: 90 + project.typologies.length * 64 + 310 }}>
@@ -129,7 +149,7 @@ export default function ProgramTab() {
                 </tr>
               ))}
               <tr className="row-total">
-                <td>TOTAL</td>
+                <td>Total</td>
                 {project.typologies.map((t) => {
                   const ts = program.byTypology.find((x) => x.typology.id === t.id);
                   return <td key={t.id} className="text-right !px-2">{fmt0(ts?.totalUnits ?? 0)}</td>;
@@ -141,7 +161,7 @@ export default function ProgramTab() {
             </tbody>
           </table>
           {program.balconyGfaFactor > 0 && (
-            <p className="text-[10.5px] text-ink-500 mt-2 leading-snug">
+            <p className="text-[12px] text-ink-500 mt-2 leading-snug">
               GFA counts interior + {Math.round(program.balconyGfaFactor * 100)} % of each balcony
               (Typologies → Balconies in GFA): {fmt2(program.totalInteriorGFA)} m² interior +{" "}
               {fmt2(program.totalBalconyGFA)} m² of the {fmt2(program.totalBalcony)} m² of balconies.
@@ -152,8 +172,28 @@ export default function ProgramTab() {
 
       <div className="card">
         <div className="mb-5">
-          <h2 className="section-title">Mix by typology</h2>
+          <h2 className="section-title">Unit mix</h2>
+          <p className="section-sub">Share of units by category, then the detail per typology.</p>
         </div>
+        {program.totalUnits > 0 && (
+          <div className="mb-5">
+            <StackedBar
+              label="Unit mix by category"
+              segments={(Object.keys(CATEGORY_RAMP) as UnitCategory[]).map((cat) => {
+                const units = program.byTypology
+                  .filter((x) => x.typology.category === cat)
+                  .reduce((sum, x) => sum + x.totalUnits, 0);
+                return {
+                  key: cat,
+                  label: CATEGORY_LABEL[cat],
+                  value: units,
+                  color: CATEGORY_RAMP[cat],
+                  display: `${units} · ${((units / program.totalUnits) * 100).toFixed(0)}%`,
+                };
+              })}
+            />
+          </div>
+        )}
         <table className="tbl w-full" style={{ minWidth: 680 }}>
           <colgroup>
             <col />
@@ -182,7 +222,7 @@ export default function ProgramTab() {
               </tr>
             ))}
             <tr className="row-total">
-              <td>TOTAL</td>
+              <td>Total</td>
               <td className="text-right">{fmt0(program.totalUnits)}</td>
               <td className="text-right">100.0%</td>
               <td className="text-right">{fmt2(program.totalApartmentsGFA)}</td>
@@ -257,12 +297,15 @@ function AutoFillPanel({ letter, project, mix, apartmentsGFA, onApply }: AutoFil
   }
 
   return (
-    <div className="card bg-brand-50 border-brand-200">
-      <div className="flex items-start gap-4 flex-wrap">
-        <div className="text-[28px] font-light text-brand-700 tabular-nums leading-none">{letter}</div>
+    <div className="card bg-gradient-to-br from-brand-50 to-white border-brand-200">
+      <div className="flex items-start gap-5 flex-wrap">
+        <div className="w-14 h-14 rounded-2xl bg-white ring-1 ring-brand-200 shadow-card flex flex-col items-center justify-center shrink-0">
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-brand-600 leading-none">Class</span>
+          <span className="text-[24px] font-semibold text-brand-700 leading-none mt-0.5">{letter}</span>
+        </div>
         <div className="flex-1 min-w-[260px]">
-          <div className="eyebrow text-brand-800 text-[10px]">Auto-fill from class mix</div>
-          <p className="text-[12px] text-ink-700 mt-1 leading-snug">
+          <div className="text-[16px] font-semibold text-ink-900 tracking-tight">Auto-fill from the unit mix</div>
+          <p className="text-[13px] text-ink-600 mt-1 leading-snug">
             Distributes units across the matrix using the project&apos;s unit mix (class {letter}&apos;s
             defaults plus any per-typology override from Typologies) and
             the <strong>Apartments GFA</strong> from Setup as the target. After applying,
@@ -271,24 +314,24 @@ function AutoFillPanel({ letter, project, mix, apartmentsGFA, onApply }: AutoFil
               ? ` — GFA per unit = interior + ${Math.round(bf * 100)} % of the balcony (Typologies → Balconies in GFA).`
               : " — balconies are GFA-exempt (Typologies → Balconies in GFA), so GFA per unit = interior."}
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            <div>
-              <div className="eyebrow text-ink-500 text-[10px]">Apartments GFA target</div>
-              <div className="text-[16px] font-medium text-brand-800 tabular-nums">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+            <div className="rounded-lg bg-white ring-1 ring-inset ring-brand-200 p-3">
+              <div className="text-[12px] font-medium text-ink-500">Apartments GFA target</div>
+              <div className="text-[18px] font-semibold text-brand-800 tracking-tight mt-0.5">
                 {apartmentsGFA > 0 ? `${Math.round(apartmentsGFA).toLocaleString("en-US")} m²` : "—"}
               </div>
             </div>
-            <div>
-              <div className="eyebrow text-ink-500 text-[10px]">Estimated total units</div>
-              <div className="text-[16px] font-medium text-ink-900 tabular-nums">{totalUnits.toLocaleString("en-US")}</div>
+            <div className="rounded-lg bg-white ring-1 ring-inset ring-ink-200/80 p-3">
+              <div className="text-[12px] font-medium text-ink-500">Estimated total units</div>
+              <div className="text-[18px] font-semibold text-ink-900 tracking-tight mt-0.5">{totalUnits.toLocaleString("en-US")}</div>
             </div>
-            <div>
-              <div className="eyebrow text-ink-500 text-[10px]">After rounding · Σ GFA{bf > 0 ? ` (int. + ${Math.round(bf * 100)}% balc.)` : ""}</div>
-              <div className="text-[16px] font-medium text-ink-900 tabular-nums">
+            <div className="rounded-lg bg-white ring-1 ring-inset ring-ink-200/80 p-3">
+              <div className="text-[12px] font-medium text-ink-500">After rounding · Σ GFA{bf > 0 ? ` (int. + ${Math.round(bf * 100)}% balc.)` : ""}</div>
+              <div className="text-[18px] font-semibold text-ink-900 tracking-tight mt-0.5">
                 {Math.round(actualInteriorGFA).toLocaleString("en-US")} m²
               </div>
               {Math.abs(interiorGFADrift) > 1 && (
-                <div className={`text-[10.5px] ${Math.abs(interiorGFADrift) > apartmentsGFA * 0.02 ? "text-amber-700" : "text-ink-500"}`}>
+                <div className={`text-[11.5px] ${Math.abs(interiorGFADrift) > apartmentsGFA * 0.02 ? "text-amber-700" : "text-ink-500"}`}>
                   {interiorGFADrift >= 0 ? "+" : ""}{Math.round(interiorGFADrift).toLocaleString("en-US")} m² vs target
                 </div>
               )}
@@ -303,14 +346,14 @@ function AutoFillPanel({ letter, project, mix, apartmentsGFA, onApply }: AutoFil
           </div>
 
           {apartmentsGFA <= 0 && (
-            <p className="text-[11px] text-amber-800 mt-2 leading-snug">
+            <p className="text-[12px] text-amber-800 mt-3 leading-snug">
               No Apartments GFA detected. Set <strong>Residential</strong> in Setup&apos;s GFA breakdown
               (and the Apartments share of the residential sub-breakdown) to enable auto-fill.
             </p>
           )}
 
           {droppedKeys.length > 0 && apartmentsGFA > 0 && (
-            <p className="text-[11px] text-amber-800 mt-2 leading-snug">
+            <p className="text-[12px] text-amber-800 mt-3 leading-snug">
               {(droppedShare * 100).toFixed(1)}% of the class mix has no matching typology in the
               project — those units are dropped (categories: {droppedKeys.join(", ")}).
               Add a typology of that category in the Typologies tab to capture them.
@@ -318,7 +361,7 @@ function AutoFillPanel({ letter, project, mix, apartmentsGFA, onApply }: AutoFil
           )}
 
           {matrixDiverges && (
-            <div className="border border-amber-200 bg-amber-50 text-amber-900 p-2.5 mt-3 text-[11.5px] leading-snug">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-900 p-3 mt-3 text-[12.5px] leading-snug">
               The matrix below currently holds <strong>{current.totalUnits} units</strong> (Σ{" "}
               {Math.round(current.totalApartmentsGFA).toLocaleString("en-US")} m² GFA) — different
               from the <strong>{totalUnits} units</strong> this auto-fill would produce. It was
@@ -329,10 +372,10 @@ function AutoFillPanel({ letter, project, mix, apartmentsGFA, onApply }: AutoFil
 
           {targets.length > 0 && totalUnits > 0 && (
             <div className="mt-4">
-              <div className="eyebrow text-ink-500 text-[10px] mb-2">Per typology · target units</div>
-              <table className="w-full text-[11.5px] tabular-nums">
+              <div className="text-[12px] font-semibold text-ink-600 mb-2">Per typology · target units</div>
+              <table className="w-full text-[12.5px] tabular-nums">
                 <thead>
-                  <tr className="text-[10px] uppercase tracking-[0.08em] text-ink-500">
+                  <tr className="text-[10.5px] uppercase tracking-[0.05em] text-ink-500">
                     <th className="text-left py-1 font-medium">Typology</th>
                     <th className="text-right py-1 font-medium">Mix %</th>
                     <th className="text-right py-1 font-medium">{bf > 0 ? "GFA / unit" : "Interior / unit"}</th>

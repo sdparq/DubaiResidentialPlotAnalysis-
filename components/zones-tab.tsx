@@ -44,7 +44,7 @@ export default function ZonesTab() {
       <div className="card">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h2 className="section-title">Class library · Dubai &amp; Abu Dhabi</h2>
+            <h2 className="section-title">Market classes · Dubai &amp; Abu Dhabi</h2>
             <p className="section-sub">
               Reference matrix of UAE real-estate classes
               (A&nbsp;&middot; Most luxurious &rarr; G&nbsp;&middot; Economical).
@@ -59,27 +59,26 @@ export default function ZonesTab() {
               onClick={() => {
                 if (confirm("Restore the whole library to its seed values?")) resetAll();
               }}
-              className="text-[11px] uppercase tracking-[0.10em] text-ink-500 hover:text-ink-900 underline"
+              className="btn btn-secondary btn-xs"
             >Reset all</button>
           </div>
         </div>
       </div>
 
       <div className="card">
-        <div className="flex items-center gap-1 flex-wrap mb-4">
+        <div className="seg flex-wrap mb-4" role="tablist" aria-label="Library sections">
           {SECTION_LABELS.map((s) => (
             <button
               key={s.id}
+              role="tab"
+              aria-selected={section === s.id}
+              data-active={section === s.id}
               onClick={() => setSection(s.id)}
-              className={`px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.10em] border ${
-                section === s.id
-                  ? "bg-brand-500 text-white border-brand-500"
-                  : "border-ink-200 text-ink-700 hover:bg-bone-50"
-              }`}
+              className="seg-btn !py-1.5"
             >{s.label}</button>
           ))}
         </div>
-        <p className="text-[11.5px] text-ink-500 mb-4 leading-snug">
+        <p className="text-[12.5px] text-ink-500 mb-4 leading-snug">
           {SECTION_LABELS.find((s) => s.id === section)?.hint}
         </p>
 
@@ -112,10 +111,10 @@ function OverviewMatrix({
       {ALL_CLASS_LETTERS.map((letter) => {
         const row = library[letter];
         return (
-          <div key={letter} className="border border-ink-200 p-4 grid gap-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <div className="flex items-baseline gap-3">
-                <span className="text-[26px] font-light text-brand-700 tabular-nums">{letter}</span>
+          <div key={letter} className="rounded-xl ring-1 ring-inset ring-ink-200/80 p-4 grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="w-10 h-10 rounded-xl bg-brand-50 ring-1 ring-inset ring-brand-200 flex items-center justify-center text-[20px] font-semibold text-brand-700 shrink-0">{letter}</span>
                 <input
                   className="cell-input !text-[14px] !font-medium"
                   value={row.name}
@@ -124,7 +123,7 @@ function OverviewMatrix({
               </div>
               <button
                 onClick={() => resetClass(letter)}
-                className="text-[10.5px] uppercase tracking-[0.10em] text-ink-500 hover:text-ink-900 underline"
+                className="btn btn-ghost btn-xs"
               >Reset class {letter}</button>
             </div>
             <textarea
@@ -133,7 +132,7 @@ function OverviewMatrix({
               value={row.description}
               onChange={(e) => update(letter, { description: e.target.value })}
             />
-            <div className="text-[10.5px] text-ink-500">
+            <div className="text-[12px] text-ink-500">
               {row.locations.length} zone{row.locations.length === 1 ? "" : "s"} in this class.
             </div>
           </div>
@@ -152,15 +151,9 @@ function LocationsMatrix({
   const [city, setCity] = useState<Emirate | "all">("all");
   return (
     <div className="grid gap-3">
-      <div className="inline-flex border border-ink-200 bg-bone-50 self-start">
+      <div className="seg self-start">
         {([["all", "Both"], ["Dubai", "Dubai"], ["Abu Dhabi", "Abu Dhabi"]] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setCity(id)}
-            className={`px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.10em] transition-colors ${
-              city === id ? "bg-brand-500 text-white" : "text-ink-700 hover:bg-bone-100"
-            }`}
-          >{label}</button>
+          <button key={id} onClick={() => setCity(id)} data-active={city === id} className="seg-btn !py-1.5">{label}</button>
         ))}
       </div>
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -209,10 +202,10 @@ function LocationsCard({
   const liveCount = draft.split("\n").map((s) => s.trim()).filter(Boolean).length;
 
   return (
-    <div className="border border-ink-200 p-3 grid gap-2">
-      <div className="flex items-baseline gap-2">
-        <span className="text-[18px] font-light text-brand-700">{letter}</span>
-        <span className="text-[11px] text-ink-500">{row.name}</span>
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 p-3.5 grid gap-2">
+      <div className="flex items-center gap-2">
+        <span className="w-7 h-7 rounded-lg bg-brand-50 ring-1 ring-inset ring-brand-200 flex items-center justify-center text-[14px] font-semibold text-brand-700">{letter}</span>
+        <span className="text-[13px] font-medium text-ink-700">{row.name}</span>
       </div>
       <textarea
         className="cell-input text-[11.5px] leading-snug font-mono"
@@ -223,7 +216,7 @@ function LocationsCard({
         onBlur={commit}
         placeholder="One zone per line"
       />
-      <div className="text-[10.5px] text-ink-500">
+      <div className="text-[12px] text-ink-500">
         {liveCount} zone{liveCount === 1 ? "" : "s"}
         {cityFilter !== "all" && hidden.length > 0 && ` · ${hidden.length} more hidden (other city)`}
       </div>
@@ -308,13 +301,13 @@ function FloorHeightsMatrix({
     { key: "typical", label: "Typical residential floor" },
   ];
   return (
-    <div className="border border-ink-200 overflow-x-auto">
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 overflow-x-auto">
       <table className="w-full text-[12px] tabular-nums">
         <thead>
           <tr className="bg-bone-50 border-b border-ink-200">
-            <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Section</th>
+            <th className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">Section</th>
             {ALL_CLASS_LETTERS.map((l) => (
-              <th key={l} className="px-2 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">{l}</th>
+              <th key={l} className="px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">{l}</th>
             ))}
           </tr>
         </thead>
@@ -361,13 +354,13 @@ function ConstructionMatrix({
     { key: "superHigh270", label: "> 270 m" },
   ];
   return (
-    <div className="border border-ink-200 overflow-x-auto">
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 overflow-x-auto">
       <table className="w-full text-[11.5px] tabular-nums">
         <thead>
           <tr className="bg-bone-50 border-b border-ink-200">
-            <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Height tier</th>
+            <th className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">Height tier</th>
             {ALL_CLASS_LETTERS.map((l) => (
-              <th key={l} className="px-2 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">{l}</th>
+              <th key={l} className="px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">{l}</th>
             ))}
           </tr>
         </thead>
@@ -459,13 +452,13 @@ function MiscMatrix({
     { key: "designPriceAedPerSqftGfa", label: "Design fee (AED/sqft GFA)", step: 0.5 },
   ];
   return (
-    <div className="border border-ink-200 overflow-x-auto">
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 overflow-x-auto">
       <table className="w-full text-[12px] tabular-nums">
         <thead>
           <tr className="bg-bone-50 border-b border-ink-200">
-            <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Metric</th>
+            <th className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">Metric</th>
             {ALL_CLASS_LETTERS.map((l) => (
-              <th key={l} className="px-2 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">{l}</th>
+              <th key={l} className="px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">{l}</th>
             ))}
           </tr>
         </thead>
@@ -518,13 +511,13 @@ function NumberMatrix({
   footerFor?: (l: ZoneClass) => string;
 }) {
   return (
-    <div className="border border-ink-200 overflow-x-auto">
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 overflow-x-auto">
       <table className="w-full text-[12px] tabular-nums">
         <thead>
           <tr className="bg-bone-50 border-b border-ink-200">
-            <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Typology</th>
+            <th className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">Typology</th>
             {ALL_CLASS_LETTERS.map((l) => (
-              <th key={l} className="px-2 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500">{l}</th>
+              <th key={l} className="px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500">{l}</th>
             ))}
           </tr>
         </thead>
@@ -555,7 +548,7 @@ function NumberMatrix({
           ))}
           {footerLabel && footerFor && (
             <tr className="bg-brand-50 font-medium">
-              <td className="px-3 py-1.5 text-[10.5px] uppercase tracking-[0.08em] text-brand-800">{footerLabel}</td>
+              <td className="px-3 py-2 text-[12.5px] font-semibold text-brand-800">{footerLabel}</td>
               {ALL_CLASS_LETTERS.map((l) => (
                 <td key={l} className="px-1 py-1.5 text-right text-brand-800 text-[11px]">{footerFor(l)}</td>
               ))}
@@ -577,13 +570,13 @@ function RangeMatrix({
   suffix: string;
 }) {
   return (
-    <div className="border border-ink-200 overflow-x-auto">
+    <div className="rounded-xl ring-1 ring-inset ring-ink-200/80 overflow-x-auto">
       <table className="w-full text-[11.5px] tabular-nums">
         <thead>
           <tr className="bg-bone-50 border-b border-ink-200">
-            <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500" rowSpan={2}>Typology</th>
+            <th className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500" rowSpan={2}>Typology</th>
             {ALL_CLASS_LETTERS.map((l) => (
-              <th key={l} className="px-2 py-2 text-[10.5px] uppercase tracking-[0.08em] text-ink-500 text-center" colSpan={2}>{l}</th>
+              <th key={l} className="px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-ink-500 text-center" colSpan={2}>{l}</th>
             ))}
           </tr>
           <tr className="bg-bone-50 border-b border-ink-200">
